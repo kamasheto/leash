@@ -99,9 +99,13 @@ compute_deny_paths() {
 
 build_profile() {
   touch "$IGNORE_FILE"
+  mkdir -p "$STATE_DIR"
 
   local tmp_profile
   tmp_profile="$(mktemp)"
+
+  [ -f "$STATE_DIR/nono-profile.schema.json" ] \
+    || nono profile schema -o "$STATE_DIR/nono-profile.schema.json"
 
   local deny_json
   deny_json="$(
@@ -120,14 +124,13 @@ build_profile() {
     --arg extends "$TOOL" \
     --argjson deny "$deny_json" \
     '{
-      "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
+      "$schema": "./nono-profile.schema.json",
       extends: $extends,
       meta: { name: $name, description: $desc },
       security: { capability_elevation: true },
       filesystem: { deny: $deny }
     }' > "$tmp_profile"
 
-  mkdir -p "$STATE_DIR"
   mv "$tmp_profile" "$PROFILE_PATH"
   hash_ignore_file > "$HASH_PATH"
 
