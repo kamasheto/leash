@@ -23,6 +23,7 @@ specific files/dirs. Requires a nono profile named <tool> to extend
 examples:
   leash claude
   leash codex
+  leash install
 EOF
 }
 
@@ -33,6 +34,22 @@ fi
 
 TOOL="$1"
 shift
+
+if [ "$TOOL" = "install" ]; then
+  BIN_DIR="$HOME/.local/bin"
+  SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+  mkdir -p "$BIN_DIR"
+  ln -sf "$SCRIPT_PATH" "$BIN_DIR/leash"
+  echo "leash: symlinked $SCRIPT_PATH -> $BIN_DIR/leash"
+
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) echo "leash: warning: $BIN_DIR is not on your PATH. Add it, e.g.: export PATH=\"$BIN_DIR:\$PATH\"" ;;
+  esac
+
+  exit 0
+fi
 
 PROFILE_PATH="$STATE_DIR/$TOOL.profile.json"
 HASH_PATH="$STATE_DIR/$TOOL.ignore.sha256"
