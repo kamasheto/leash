@@ -1,3 +1,5 @@
+![leash](https://sakr.me/post-heroes/leash.png)
+
 # leash
 
 Run a coding agent (`claude`, `codex`, ...) sandboxed with [nono](https://nono.sh), scoped to the current project.
