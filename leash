@@ -1,19 +1,74 @@
-#!/usr/bin/env bash
-# leash - run a coding agent sandboxed with nono, scoped to the current
-# project, honoring a .gitignore-style .nono_ignore file for deny rules.
-set -euo pipefail
+#!/usr/bin/env python3
+"""leash - run a coding agent sandboxed with nono, scoped to the current
+project, honoring a .gitignore-style .nono_ignore file for deny rules.
 
-STATE_DIR=".nono"
-IGNORE_FILE=".nono_ignore"
+Python port of the `leash` bash script. Same behavior, same on-disk file
+formats (.nono_ignore, .nono/<tool>.profile.json, .nono/<tool>.extra.json) -
+a project can switch between the bash and Python versions freely. The only
+external dependencies are `git` and `nono` (JSON is handled with the
+standard library, so `jq` is no longer required).
 
-die() {
-  echo "leash: $*" >&2
-  exit 1
-}
+Install: ./leash.py install   (symlinks this file into ~/.local/bin/leash)
+"""
+from __future__ import annotations
 
-usage() {
-  cat <<'EOF'
-usage: leash <tool> [args...]
+import hashlib
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+STATE_DIR = ".nono"
+IGNORE_FILE = ".nono_ignore"
+
+q = shlex.quote  # shorthand for quoting a variable dropped into a command string
+
+
+# ---------------------------------------------------------------------------
+# Paths - every filesystem location leash cares about for one (tool, project)
+# pair, computed once in main() and threaded through the rest of the module.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Paths:
+    tool: str
+    project_root: Path
+    ignore_path: Path = field(init=False)
+    profile_path: Path = field(init=False)
+    hash_path: Path = field(init=False)
+    extra_path: Path = field(init=False)
+    schema_path: Path = field(init=False)
+    profile_name: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.ignore_path = self.project_root / IGNORE_FILE
+        self.profile_path = self.project_root / STATE_DIR / f"{self.tool}.profile.json"
+        self.hash_path = self.project_root / STATE_DIR / f"{self.tool}.ignore.sha256"
+        self.extra_path = self.project_root / STATE_DIR / f"{self.tool}.extra.json"
+        self.schema_path = self.project_root / STATE_DIR / "nono-profile.schema.json"
+        self.profile_name = f"leash-{self.tool}-{slugify(self.project_root.name)}"
+
+
+def slugify(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "-", name).strip("-")
+
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+def die(message: str) -> None:
+    print(f"leash: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def usage() -> None:
+    print("""usage: leash <tool> [args...]
 
 Runs <tool> (e.g. claude, codex) sandboxed with nono, scoped to this
 project. Respects .nono_ignore (.gitignore syntax) to deny access to
@@ -23,306 +78,348 @@ specific files/dirs. Requires a nono profile named <tool> to extend
 examples:
   leash claude
   leash codex
-  leash install
-EOF
-}
+  leash install""")
 
-if [ "$#" -eq 0 ]; then
-  usage
-  exit 0
-fi
 
-TOOL="$1"
-shift
+def require_cmd(name: str) -> None:
+    from shutil import which
+    if which(name) is None:
+        die(f"'{name}' is required but not found in PATH.")
 
-if [ "$TOOL" = "install" ]; then
-  BIN_DIR="$HOME/.local/bin"
-  SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
-  mkdir -p "$BIN_DIR"
-  ln -sf "$SCRIPT_PATH" "$BIN_DIR/leash"
-  echo "leash: symlinked $SCRIPT_PATH -> $BIN_DIR/leash"
+def run_cmd(cmd: str, **kwargs) -> subprocess.CompletedProcess:
+    """Run a normal-looking bash command string, e.g. run_cmd(f"git -C {q(root)} status").
 
-  case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *) echo "leash: warning: $BIN_DIR is not on your PATH. Add it, e.g.: export PATH=\"$BIN_DIR:\$PATH\"" ;;
-  esac
+    Splits it with shlex (so quoted arguments, e.g. from q(), survive intact)
+    and hands the resulting argv straight to subprocess.run - no shell involved.
+    """
+    return subprocess.run(shlex.split(cmd), **kwargs)
 
-  exit 0
-fi
 
-PROFILE_PATH="$STATE_DIR/$TOOL.profile.json"
-HASH_PATH="$STATE_DIR/$TOOL.ignore.sha256"
-# Fallback store for filesystem grants absorbed from nono's post-session
-# save-profile prompt that can't be expressed as a .nono_ignore pattern
-# (allow/read/write grants, or paths outside $WORKDIR). Folded into the
-# generated profile on every rebuild, alongside .nono_ignore.
-EXTRA_PATH="$STATE_DIR/$TOOL.extra.json"
+def write_atomic(path: Path, text: str) -> None:
+    """Write via a temp file + rename, so a reader never sees a partial file."""
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".leash-tmp-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || die "'$1' is required but not found in PATH."
-}
 
-require_cmd nono
-require_cmd git
-require_cmd jq
-require_cmd "$TOOL"
+def unique_sorted(items: list[str]) -> list[str]:
+    return sorted({item for item in items if item})
 
-PROJECT_ROOT="$(pwd)"
 
-git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-  || die "current directory is not a git repository (leash needs git to resolve .nono_ignore patterns). Run 'git init' first."
+# ---------------------------------------------------------------------------
+# install subcommand
+# ---------------------------------------------------------------------------
 
-REPO_ROOT="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel)"
-if [ "$REPO_ROOT" != "$PROJECT_ROOT" ]; then
-  die "run leash from the repository root ($REPO_ROOT), not a subdirectory."
-fi
+def run_install() -> None:
+    self_path = Path(__file__).resolve()
+    bin_dir = Path.home() / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
 
-PROJECT_SLUG="$(basename "$PROJECT_ROOT" | tr -c "a-zA-Z0-9" "-" | tr -s "-")"
-PROJECT_SLUG="${PROJECT_SLUG%-}"
-PROJECT_SLUG="${PROJECT_SLUG#-}"
-PROFILE_NAME="leash-${TOOL}-${PROJECT_SLUG}"
+    target = bin_dir / "leash"
+    target.unlink(missing_ok=True)
+    target.symlink_to(self_path)
+    print(f"leash: symlinked {self_path} -> {target}")
 
-hash_ignore_file() {
-  local ignore_hash extra_hash
-  if [ -f "$IGNORE_FILE" ]; then
-    ignore_hash="$(shasum -a 256 "$IGNORE_FILE" | awk '{print $1}')"
-  else
-    ignore_hash="no-ignore-file"
-  fi
-  if [ -f "$EXTRA_PATH" ]; then
-    extra_hash="$(shasum -a 256 "$EXTRA_PATH" | awk '{print $1}')"
-  else
-    extra_hash="no-extra-file"
-  fi
-  echo "$ignore_hash $extra_hash"
-}
+    path_env = f":{os.environ.get('PATH', '')}:"
+    if f":{bin_dir}:" not in path_env:
+        print(f"leash: warning: {bin_dir} is not on your PATH. "
+              f"Add it, e.g.: export PATH=\"{bin_dir}:$PATH\"")
 
-# Resolve .nono_ignore into concrete paths to deny, using git's own
-# gitignore-pattern matcher so we get correct semantics (negation, **,
-# anchoring) for free. --directory collapses whole ignored untracked
-# directories into a single entry instead of listing every file inside.
-# Paths are newline-delimited on output (filenames containing a literal
-# newline are not supported).
-compute_deny_paths() {
-  [ -f "$IGNORE_FILE" ] || return 0
-  git -C "$PROJECT_ROOT" ls-files -z \
-    --cached --others --directory --no-empty-directory \
-    --ignored --exclude-from="$IGNORE_FILE" \
-    | while IFS= read -r -d "" path; do
-        printf "%s\\n" "${path%/}"
-      done
-}
 
-extra_field() {
-  # Reads one array field ("deny"/"allow"/"read"/"write") out of $EXTRA_PATH.
-  [ -f "$EXTRA_PATH" ] || return 0
-  jq -r --arg key "$1" '.[$key] // [] | .[]' "$EXTRA_PATH"
-}
+# ---------------------------------------------------------------------------
+# git-backed .nono_ignore resolution
+# ---------------------------------------------------------------------------
 
-ensure_gitignore_has_state_dir() {
-  touch .gitignore
-  grep -qxF "$STATE_DIR/" .gitignore || printf "%s\n" "$STATE_DIR/" >> .gitignore
-}
+def compute_deny_paths(p: Paths) -> list[str]:
+    """Resolve .nono_ignore into concrete repo-relative paths to deny, using
+    git's own gitignore-pattern matcher (negation, **, anchoring) instead of
+    reimplementing it. --directory collapses whole ignored untracked
+    directories into a single entry."""
+    if not p.ignore_path.exists():
+        return []
+    out = run_cmd(
+        f"git -C {q(str(p.project_root))} ls-files -z --cached --others "
+        f"--directory --no-empty-directory --ignored --exclude-from={q(str(p.ignore_path))}",
+        check=True, capture_output=True, text=True,
+    ).stdout
+    return [entry.rstrip("/") for entry in out.split("\0") if entry]
 
-build_profile() {
-  touch "$IGNORE_FILE"
-  mkdir -p "$STATE_DIR"
-  ensure_gitignore_has_state_dir
 
-  local tmp_profile
-  tmp_profile="$(mktemp)"
+# ---------------------------------------------------------------------------
+# .nono/<tool>.extra.json - grants that .nono_ignore can't express
+# ---------------------------------------------------------------------------
 
-  [ -f "$STATE_DIR/nono-profile.schema.json" ] \
-    || nono profile schema -o "$STATE_DIR/nono-profile.schema.json"
+def load_extra(path: Path) -> dict[str, list[str]]:
+    empty = {"deny": [], "allow": [], "read": [], "write": []}
+    if not path.exists():
+        return empty
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return empty  # malformed extra file: ignore, same as bash's jq guard
+    return {key: list(data.get(key) or []) for key in empty}
 
-  # Extra allow/read/write grants win over .nono_ignore-derived denies for
-  # the same path, so paths the user explicitly allowed at a save-profile
-  # prompt don't stay silently denied after being absorbed.
-  local allow_json read_json write_json
-  allow_json="$(extra_field allow | jq -Rs 'split("\n") | map(select(length > 0)) | unique')"
-  read_json="$(extra_field read | jq -Rs 'split("\n") | map(select(length > 0)) | unique')"
-  write_json="$(extra_field write | jq -Rs 'split("\n") | map(select(length > 0)) | unique')"
 
-  local deny_json
-  deny_json="$(
-    {
-      compute_deny_paths | sed "s|^|\$WORKDIR/|"
-      printf "%s\\n" "\$WORKDIR/$IGNORE_FILE"
-      extra_field deny
-    } | jq -Rs --argjson allow "$allow_json" --argjson read "$read_json" --argjson write "$write_json" '
-      split("\n") | map(select(length > 0)) | unique
-      | . - ($allow + $read + $write)
-    '
-  )"
+def save_extra(path: Path, extra: dict[str, list[str]]) -> None:
+    normalized = {key: unique_sorted(values) for key, values in extra.items()}
+    write_atomic(path, json.dumps(normalized, indent=2) + "\n")
 
-  local project_slug="$PROJECT_SLUG"
 
-  jq -n \
-    --arg name "$PROFILE_NAME" \
-    --arg desc "Generated by leash. Do not edit by hand; edit .nono_ignore instead." \
-    --arg extends "$TOOL" \
-    --argjson deny "$deny_json" \
-    --argjson allow "$allow_json" \
-    --argjson read "$read_json" \
-    --argjson write "$write_json" \
-    '{
-      "$schema": "./nono-profile.schema.json",
-      extends: $extends,
-      meta: { name: $name, description: $desc },
-      security: { capability_elevation: true },
-      filesystem: {
-        deny: $deny,
-        allow: $allow,
-        read: $read,
-        write: $write
-      }
-    } | .filesystem |= with_entries(select(.value | length > 0))
-      | if (.filesystem | length) == 0 then del(.filesystem) else . end' > "$tmp_profile"
+def append_extra(extra_path: Path, key: str, value: str) -> None:
+    extra = load_extra(extra_path)
+    extra[key].append(value)
+    save_extra(extra_path, extra)
 
-  mv "$tmp_profile" "$PROFILE_PATH"
-  hash_ignore_file > "$HASH_PATH"
 
-  nono profile validate "$PROFILE_PATH" \
-    || die "generated profile failed validation (see above). This is a leash bug - please report it."
-}
+# ---------------------------------------------------------------------------
+# Change detection: skip rebuilding the profile when nothing that feeds it
+# has changed.
+# ---------------------------------------------------------------------------
 
-needs_rebuild() {
-  [ ! -f "$PROFILE_PATH" ] && return 0
-  [ ! -f "$HASH_PATH" ] && return 0
-  [ "$(cat "$HASH_PATH")" != "$(hash_ignore_file)" ] && return 0
-  return 1
-}
+def hash_or_sentinel(path: Path, sentinel: str) -> str:
+    if not path.exists():
+        return sentinel
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
-# nono's post-session save-profile prompt writes the user's allow/deny/skip
-# choices into its own config - either a not-yet-applied draft
-# ($cfg_dir/profile-drafts/<name>.json) or (once confirmed) directly into a
+
+def hash_state(p: Paths) -> str:
+    return f"{hash_or_sentinel(p.ignore_path, 'no-ignore-file')} {hash_or_sentinel(p.extra_path, 'no-extra-file')}"
+
+
+def needs_rebuild(p: Paths) -> bool:
+    if not p.profile_path.exists() or not p.hash_path.exists():
+        return True
+    return p.hash_path.read_text() != hash_state(p)
+
+
+# ---------------------------------------------------------------------------
+# .gitignore upkeep
+# ---------------------------------------------------------------------------
+
+def ensure_gitignore_has_state_dir(project_root: Path) -> None:
+    path = project_root / ".gitignore"
+    lines = path.read_text().splitlines() if path.exists() else []
+    if f"{STATE_DIR}/" in lines:
+        return
+    with path.open("a") as f:
+        f.write(f"{STATE_DIR}/\n")
+
+
+# ---------------------------------------------------------------------------
+# Profile generation
+# ---------------------------------------------------------------------------
+
+def build_profile(p: Paths) -> None:
+    if not p.ignore_path.exists():
+        p.ignore_path.touch()
+    (p.project_root / STATE_DIR).mkdir(parents=True, exist_ok=True)
+    ensure_gitignore_has_state_dir(p.project_root)
+
+    if not p.schema_path.exists():
+        run_cmd(f"nono profile schema -o {q(str(p.schema_path))}", check=True)
+
+    extra = load_extra(p.extra_path)
+
+    deny_raw = [f"$WORKDIR/{path}" for path in compute_deny_paths(p)]
+    deny_raw.append(f"$WORKDIR/{IGNORE_FILE}")
+    deny_raw.extend(extra["deny"])
+
+    # Extra allow/read/write grants win over .nono_ignore-derived denies for
+    # the same path, so paths explicitly allowed at a save-profile prompt
+    # don't stay silently denied after being absorbed.
+    allow = unique_sorted(extra["allow"])
+    read = unique_sorted(extra["read"])
+    write = unique_sorted(extra["write"])
+    granted = set(allow) | set(read) | set(write)
+    deny = [path for path in unique_sorted(deny_raw) if path not in granted]
+
+    profile: dict = {
+        "$schema": "./nono-profile.schema.json",
+        "extends": p.tool,
+        "meta": {
+            "name": p.profile_name,
+            "description": "Generated by leash. Do not edit by hand; edit .nono_ignore instead.",
+        },
+        "security": {"capability_elevation": True},
+    }
+    filesystem = {k: v for k, v in
+                  {"deny": deny, "allow": allow, "read": read, "write": write}.items() if v}
+    if filesystem:
+        profile["filesystem"] = filesystem
+
+    write_atomic(p.profile_path, json.dumps(profile, indent=2) + "\n")
+    p.hash_path.write_text(hash_state(p))
+
+    result = run_cmd(f"nono profile validate {q(str(p.profile_path))}")
+    if result.returncode != 0:
+        die("generated profile failed validation (see above). This is a leash bug - please report it.")
+
+
+# ---------------------------------------------------------------------------
+# Absorbing nono's post-session save-profile prompt
+#
+# nono's own save-profile prompt (shown after a session, for paths the agent
+# tried to access) writes its answers to nono's global config, keyed by a
+# profile name - either a not-yet-applied draft
+# ($cfg_dir/profile-drafts/<name>.json) or, once confirmed, directly into a
 # user-level profile ($cfg_dir/profiles/<name>.json). <name> is NOT reliably
-# our generated profile's meta.name ($PROFILE_NAME): nono attributes a given
-# deny rule's save-prompt to whichever profile in the extends chain actually
-# owns that rule, so a denial coming from "$TOOL"'s own base/pack profile
-# (its default deny groups, e.g. credentials) gets saved under plain "$TOOL",
-# not under our leash-generated name. Check both. Neither location is ever
-# read by a subsequent `leash` run on its own, so left alone those choices
-# are silently discarded every time. Pull them back into the project: deny
-# paths under $WORKDIR become .nono_ignore lines (the preferred,
-# human-readable source of truth); anything that can't be expressed there
-# (allow/read/write grants, or paths outside the project) falls back to
-# $EXTRA_PATH. Once a draft or promoted file's grants are folded in, it's
-# deleted - its content now lives in the project (.nono_ignore/$EXTRA_PATH),
+# our generated profile's meta.name (p.profile_name): nono attributes a
+# given deny rule's save-prompt to whichever profile in the extends chain
+# actually owns that rule, so a denial coming from <tool>'s own base/pack
+# profile (its default deny groups, e.g. credentials) gets saved under plain
+# <tool>, not under our leash-generated name. We check both.
+#
+# Neither location is ever read by a subsequent `leash` run on its own, so
+# left alone those choices are silently discarded every time. We pull them
+# back into the project: deny paths under $WORKDIR become .nono_ignore
+# lines (the preferred, human-readable source of truth); anything that can't
+# be expressed there (allow/read/write grants, or paths outside the project)
+# falls back to .nono/<tool>.extra.json. Once a draft or promoted file's
+# grants are folded in, it's deleted - its content now lives in the project,
 # so leaving the global copy around would just get it silently re-absorbed
-# (and re-noted) on every subsequent run.
-absorb_session_grants() {
-  local cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/nono"
+# on every subsequent run.
+# ---------------------------------------------------------------------------
 
-  local name
-  local absorbed=0
-  for name in "$PROFILE_NAME" "$TOOL"; do
-    local draft_file="$cfg_dir/profile-drafts/$name.json"
-    local promoted_file="$cfg_dir/profiles/$name.json"
+def nono_config_dir() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "nono"
 
-    local src
-    for src in "$draft_file" "$promoted_file"; do
-      [ -f "$src" ] || continue
-      jq empty "$src" >/dev/null 2>&1 || continue
 
-      local deny_paths allow_paths read_paths write_paths
-      deny_paths="$(jq -r '.filesystem.deny // [] | .[]' "$src" 2>/dev/null || true)"
-      allow_paths="$(jq -r '.filesystem.allow // [] | .[]' "$src" 2>/dev/null || true)"
-      read_paths="$(jq -r '.filesystem.read // [] | .[]' "$src" 2>/dev/null || true)"
-      write_paths="$(jq -r '.filesystem.write // [] | .[]' "$src" 2>/dev/null || true)"
+def append_ignore_line(ignore_path: Path, rel: str) -> None:
+    lines = ignore_path.read_text().splitlines() if ignore_path.exists() else []
+    if rel in lines:
+        return
+    with ignore_path.open("a") as f:
+        f.write(rel + "\n")
 
-      [ -z "$deny_paths$allow_paths$read_paths$write_paths" ] && continue
-      absorbed=1
 
-      local rel line
-      if [ -n "$deny_paths" ]; then
-        while IFS= read -r line; do
-          [ -n "$line" ] || continue
-          case "$line" in
-            '$WORKDIR/'*)
-              rel="${line#\$WORKDIR/}"
-              grep -qxF "$rel" "$IGNORE_FILE" 2>/dev/null || printf "%s\n" "$rel" >> "$IGNORE_FILE"
-              ;;
-            *)
-              append_extra deny "$line"
-              ;;
-          esac
-        done <<< "$deny_paths"
-      fi
+def absorb_from(p: Paths, src: Path, is_draft: bool) -> bool:
+    if not src.exists():
+        return False
+    try:
+        data = json.loads(src.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False  # malformed: ignore, same as bash's `jq empty` guard
 
-      while IFS= read -r line; do
-        [ -n "$line" ] && append_extra allow "$line"
-      done <<< "$allow_paths"
-      while IFS= read -r line; do
-        [ -n "$line" ] && append_extra read "$line"
-      done <<< "$read_paths"
-      while IFS= read -r line; do
-        [ -n "$line" ] && append_extra write "$line"
-      done <<< "$write_paths"
+    fs = data.get("filesystem") or {}
+    deny = fs.get("deny") or []
+    allow = fs.get("allow") or []
+    read = fs.get("read") or []
+    write = fs.get("write") or []
+    if not (deny or allow or read or write):
+        return False
 
-      if [ "$src" = "$draft_file" ]; then
-        rm -f -- "$draft_file" "$cfg_dir/profile-drafts/$name.base"
-      else
-        rm -f -- "$promoted_file"
-      fi
-    done
-  done
+    for path in deny:
+        if path.startswith("$WORKDIR/"):
+            append_ignore_line(p.ignore_path, path.removeprefix("$WORKDIR/"))
+        else:
+            append_extra(p.extra_path, "deny", path)
+    for path in allow:
+        append_extra(p.extra_path, "allow", path)
+    for path in read:
+        append_extra(p.extra_path, "read", path)
+    for path in write:
+        append_extra(p.extra_path, "write", path)
 
-  if [ "$absorbed" -eq 1 ]; then
-    strip_ignore_lines_covered_by_extra
-    echo "leash: absorbed nono's save-profile choices into $IGNORE_FILE / $EXTRA_PATH" >&2
-    build_profile
-  fi
-}
+    src.unlink(missing_ok=True)
+    if is_draft:
+        src.with_suffix(".base").unlink(missing_ok=True)
+    return True
 
-append_extra() {
-  local key="$1" value="$2"
-  [ -f "$EXTRA_PATH" ] || echo '{"deny":[],"allow":[],"read":[],"write":[]}' > "$EXTRA_PATH"
-  local tmp
-  tmp="$(mktemp)"
-  jq --arg key "$key" --arg value "$value" \
-    '.[$key] = ((.[$key] // []) + [$value] | unique)' \
-    "$EXTRA_PATH" > "$tmp"
-  mv "$tmp" "$EXTRA_PATH"
-}
 
-# If a path was granted via allow/read/write, drop any matching literal
-# .nono_ignore line so it isn't re-denied on the next rebuild.
-strip_ignore_lines_covered_by_extra() {
-  [ -f "$IGNORE_FILE" ] && [ -f "$EXTRA_PATH" ] || return 0
-  local granted
-  granted="$(jq -r '(.allow // []) + (.read // []) + (.write // []) | .[]' "$EXTRA_PATH" \
-    | sed -n 's|^\$WORKDIR/||p')"
-  [ -n "$granted" ] || return 0
+def absorb_session_grants(p: Paths) -> None:
+    cfg_dir = nono_config_dir()
+    absorbed = False
 
-  local tmp
-  tmp="$(mktemp)"
-  local line skip
-  while IFS= read -r line || [ -n "$line" ]; do
-    skip=0
-    while IFS= read -r g; do
-      [ "$line" = "$g" ] && skip=1 && break
-    done <<< "$granted"
-    [ "$skip" -eq 0 ] && printf "%s\n" "$line" >> "$tmp"
-  done < "$IGNORE_FILE"
-  mv "$tmp" "$IGNORE_FILE"
-}
+    for name in (p.profile_name, p.tool):
+        draft = cfg_dir / "profile-drafts" / f"{name}.json"
+        promoted = cfg_dir / "profiles" / f"{name}.json"
+        absorbed = absorb_from(p, draft, is_draft=True) or absorbed
+        absorbed = absorb_from(p, promoted, is_draft=False) or absorbed
 
-if needs_rebuild; then
-  build_profile
-fi
+    if not absorbed:
+        return
+    strip_ignore_lines_covered_by_extra(p)
+    print(f"leash: absorbed nono's save-profile choices into {IGNORE_FILE} / {p.extra_path}", file=sys.stderr)
+    build_profile(p)
 
-set +e
-nono run \
-  -v \
-  --allow-cwd \
-  --profile "$PROJECT_ROOT/$PROFILE_PATH" \
-  --workdir "$PROJECT_ROOT" \
-  -- "$TOOL" "$@"
-STATUS=$?
-set -e
 
-absorb_session_grants
+def strip_ignore_lines_covered_by_extra(p: Paths) -> None:
+    """If a path was granted via allow/read/write, drop any matching literal
+    .nono_ignore line so it isn't re-denied on the next rebuild."""
+    if not p.ignore_path.exists():
+        return
+    extra = load_extra(p.extra_path)
+    granted = {
+        path.removeprefix("$WORKDIR/")
+        for path in extra["allow"] + extra["read"] + extra["write"]
+        if path.startswith("$WORKDIR/")
+    }
+    if not granted:
+        return
+    lines = p.ignore_path.read_text().splitlines()
+    kept = [line for line in lines if line not in granted]
+    write_atomic(p.ignore_path, "\n".join(kept) + ("\n" if kept else ""))
 
-exit "$STATUS"
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    args = sys.argv[1:]
+    if not args:
+        usage()
+        return
+
+    tool, tool_args = args[0], args[1:]
+
+    if tool == "install":
+        run_install()
+        return
+
+    require_cmd("nono")
+    require_cmd("git")
+    require_cmd(tool)
+
+    project_root = Path.cwd()
+
+    if run_cmd(
+        f"git -C {q(str(project_root))} rev-parse --is-inside-work-tree",
+        capture_output=True,
+    ).returncode != 0:
+        die("current directory is not a git repository (leash needs git to resolve "
+            ".nono_ignore patterns). Run 'git init' first.")
+
+    repo_root = run_cmd(
+        f"git -C {q(str(project_root))} rev-parse --show-toplevel",
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if repo_root != str(project_root):
+        die(f"run leash from the repository root ({repo_root}), not a subdirectory.")
+
+    p = Paths(tool=tool, project_root=project_root)
+
+    if needs_rebuild(p):
+        build_profile(p)
+
+    tool_cmd = " ".join(q(arg) for arg in (tool, *tool_args))
+    result = run_cmd(
+        f"nono run -v --allow-cwd --profile {q(str(p.profile_path))} "
+        f"--workdir {q(str(project_root))} -- {tool_cmd}"
+    )
+
+    absorb_session_grants(p)
+
+    sys.exit(result.returncode)
+
+
+if __name__ == "__main__":
+    main()
