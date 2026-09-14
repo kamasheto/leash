@@ -2,15 +2,11 @@
 """leash - run a coding agent sandboxed with nono, scoped to the current
 project, honoring a .gitignore-style .nono_ignore file for deny rules.
 
-Python port of the `leash` bash script. Same behavior, same on-disk file
-formats (.nono_ignore, .nono/<tool>.profile.json, .nono/<tool>.extra.json) -
-a project can switch between the bash and Python versions freely. The only
-external dependencies are `git` and `nono` (JSON is handled with the
-standard library, so `jq` is no longer required).
+The only external dependencies are `git` and `nono` - JSON is handled with
+the standard library, so `jq` is not required.
 
-Install: ./leash.py install   (symlinks this file into ~/.local/bin/leash)
+Install: ./leash install   (symlinks this file into ~/.local/bin/leash)
 """
-from __future__ import annotations
 
 import hashlib
 import json
@@ -20,13 +16,12 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
 
 STATE_DIR = ".nono"
 IGNORE_FILE = ".nono_ignore"
 
-q = shlex.quote  # shorthand for quoting a variable dropped into a command string
+quote = shlex.quote  # for dropping a variable into a run_cmd() command string
 
 
 # ---------------------------------------------------------------------------
@@ -34,24 +29,16 @@ q = shlex.quote  # shorthand for quoting a variable dropped into a command strin
 # pair, computed once in main() and threaded through the rest of the module.
 # ---------------------------------------------------------------------------
 
-@dataclass
 class Paths:
-    tool: str
-    project_root: Path
-    ignore_path: Path = field(init=False)
-    profile_path: Path = field(init=False)
-    hash_path: Path = field(init=False)
-    extra_path: Path = field(init=False)
-    schema_path: Path = field(init=False)
-    profile_name: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        self.ignore_path = self.project_root / IGNORE_FILE
-        self.profile_path = self.project_root / STATE_DIR / f"{self.tool}.profile.json"
-        self.hash_path = self.project_root / STATE_DIR / f"{self.tool}.ignore.sha256"
-        self.extra_path = self.project_root / STATE_DIR / f"{self.tool}.extra.json"
-        self.schema_path = self.project_root / STATE_DIR / "nono-profile.schema.json"
-        self.profile_name = f"leash-{self.tool}-{slugify(self.project_root.name)}"
+    def __init__(self, tool: str, project_root: Path):
+        self.tool = tool
+        self.project_root = project_root
+        self.ignore_path = project_root / IGNORE_FILE
+        self.profile_path = project_root / STATE_DIR / f"{tool}.profile.json"
+        self.hash_path = project_root / STATE_DIR / f"{tool}.ignore.sha256"
+        self.extra_path = project_root / STATE_DIR / f"{tool}.extra.json"
+        self.schema_path = project_root / STATE_DIR / "nono-profile.schema.json"
+        self.profile_name = f"leash-{tool}-{slugify(project_root.name)}"
 
 
 def slugify(name: str) -> str:
@@ -88,9 +75,9 @@ def require_cmd(name: str) -> None:
 
 
 def run_cmd(cmd: str, **kwargs) -> subprocess.CompletedProcess:
-    """Run a normal-looking bash command string, e.g. run_cmd(f"git -C {q(root)} status").
+    """Run a normal-looking bash command string, e.g. run_cmd(f"git -C {quote(root)} status").
 
-    Splits it with shlex (so quoted arguments, e.g. from q(), survive intact)
+    Splits it with shlex (so quoted arguments, e.g. from quote(), survive intact)
     and hands the resulting argv straight to subprocess.run - no shell involved.
     """
     return subprocess.run(shlex.split(cmd), **kwargs)
@@ -144,8 +131,8 @@ def compute_deny_paths(p: Paths) -> list[str]:
     if not p.ignore_path.exists():
         return []
     out = run_cmd(
-        f"git -C {q(str(p.project_root))} ls-files -z --cached --others "
-        f"--directory --no-empty-directory --ignored --exclude-from={q(str(p.ignore_path))}",
+        f"git -C {quote(str(p.project_root))} ls-files -z --cached --others "
+        f"--directory --no-empty-directory --ignored --exclude-from={quote(str(p.ignore_path))}",
         check=True, capture_output=True, text=True,
     ).stdout
     return [entry.rstrip("/") for entry in out.split("\0") if entry]
@@ -222,7 +209,7 @@ def build_profile(p: Paths) -> None:
     ensure_gitignore_has_state_dir(p.project_root)
 
     if not p.schema_path.exists():
-        run_cmd(f"nono profile schema -o {q(str(p.schema_path))}", check=True)
+        run_cmd(f"nono profile schema -o {quote(str(p.schema_path))}", check=True)
 
     extra = load_extra(p.extra_path)
 
@@ -239,7 +226,7 @@ def build_profile(p: Paths) -> None:
     granted = set(allow) | set(read) | set(write)
     deny = [path for path in unique_sorted(deny_raw) if path not in granted]
 
-    profile: dict = {
+    profile = {
         "$schema": "./nono-profile.schema.json",
         "extends": p.tool,
         "meta": {
@@ -248,15 +235,22 @@ def build_profile(p: Paths) -> None:
         },
         "security": {"capability_elevation": True},
     }
-    filesystem = {k: v for k, v in
-                  {"deny": deny, "allow": allow, "read": read, "write": write}.items() if v}
+    filesystem = {}
+    if deny:
+        filesystem["deny"] = deny
+    if allow:
+        filesystem["allow"] = allow
+    if read:
+        filesystem["read"] = read
+    if write:
+        filesystem["write"] = write
     if filesystem:
         profile["filesystem"] = filesystem
 
     write_atomic(p.profile_path, json.dumps(profile, indent=2) + "\n")
     p.hash_path.write_text(hash_state(p))
 
-    result = run_cmd(f"nono profile validate {q(str(p.profile_path))}")
+    result = run_cmd(f"nono profile validate {quote(str(p.profile_path))}")
     if result.returncode != 0:
         die("generated profile failed validation (see above). This is a leash bug - please report it.")
 
@@ -392,14 +386,14 @@ def main() -> None:
     project_root = Path.cwd()
 
     if run_cmd(
-        f"git -C {q(str(project_root))} rev-parse --is-inside-work-tree",
+        f"git -C {quote(str(project_root))} rev-parse --is-inside-work-tree",
         capture_output=True,
     ).returncode != 0:
         die("current directory is not a git repository (leash needs git to resolve "
             ".nono_ignore patterns). Run 'git init' first.")
 
     repo_root = run_cmd(
-        f"git -C {q(str(project_root))} rev-parse --show-toplevel",
+        f"git -C {quote(str(project_root))} rev-parse --show-toplevel",
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     if repo_root != str(project_root):
@@ -410,10 +404,10 @@ def main() -> None:
     if needs_rebuild(p):
         build_profile(p)
 
-    tool_cmd = " ".join(q(arg) for arg in (tool, *tool_args))
+    tool_cmd = " ".join(quote(arg) for arg in (tool, *tool_args))
     result = run_cmd(
-        f"nono run -v --allow-cwd --profile {q(str(p.profile_path))} "
-        f"--workdir {q(str(project_root))} -- {tool_cmd}"
+        f"nono run -v --allow-cwd --profile {quote(str(p.profile_path))} "
+        f"--workdir {quote(str(project_root))} -- {tool_cmd}"
     )
 
     absorb_session_grants(p)
