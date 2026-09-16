@@ -1,1 +1,5 @@
-# Read more about leash at https://github.com/kamasheto/leash
+# `.gitignore` syntax deny-list
+# list of files to explicitly restrict access to your agent
+# only relevant if running your agent behind `leash`
+# read more: https://github.com/kamasheto/leash
+

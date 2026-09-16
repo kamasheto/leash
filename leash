@@ -204,7 +204,12 @@ def ensure_gitignore_has_state_dir(project_root: Path) -> None:
 
 def build_profile(p: Paths) -> None:
     if not p.ignore_path.exists():
-        p.ignore_path.write_text("# Read more about leash at https://github.com/kamasheto/leash\n")
+        p.ignore_path.write_text("""# `.gitignore` syntax deny-list
+# list of files to explicitly restrict access to your agent
+# only relevant if running your agent behind `leash`
+# read more: https://github.com/kamasheto/leash
+
+""")
     (p.project_root / STATE_DIR).mkdir(parents=True, exist_ok=True)
     ensure_gitignore_has_state_dir(p.project_root)
 
