@@ -8,7 +8,7 @@ Run a coding agent (`claude`, `codex`, ...) sandboxed with [nono](https://nono.s
 
 - [nono](https://nono.sh) installed, with a base profile matching your tool name (e.g. `nono profile list` should show `claude` and/or `codex`)
 - `git`
-- Python 3 (standard library only — no extra packages to install)
+- Python 3
 
 ## Installation
 
