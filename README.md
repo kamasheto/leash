@@ -12,10 +12,33 @@ Run a coding agent (`claude`, `codex`, ...) sandboxed with [nono](https://nono.s
 
 ## Installation
 
+<details>
+  <summary>Install nono.sh if not already installed (click to expand)</summary>
+  <blockquote>
+    <sub>Latest instructions from https://nono.sh</sub>
+
 ```sh
+# Install nono.sh
+brew install nono
+
+# If needed: install claude plugin
+nono pull nolabs-ai/claude
+
+# If needed: install codex plugin
+nono pull nolabs-ai/codex
+
+```
+  </blockquote>
+
+</details>
+
+```sh
+# clone 
 git clone git@github.com:kamasheto/leash.git
-cd leash
-./leash install
+
+# create a symlink from the leash cli
+./leash/leash install
+
 ```
 
 This symlinks `leash` into `~/.local/bin/leash`. Make sure `~/.local/bin` is on your `PATH`.
