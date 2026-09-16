@@ -18,8 +18,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-STATE_DIR = ".nono"
-IGNORE_FILE = ".nono_ignore"
+STATE_DIR = ".leash"
+IGNORE_FILE = ".leash_deny"
 
 quote = shlex.quote  # for dropping a variable into a run_cmd() command string
 

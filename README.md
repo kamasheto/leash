@@ -40,7 +40,7 @@ Running `leash` with no arguments prints a short usage tip.
 
 Day to day, there are only two files you should ever need to touch:
 
-- **`.nono_ignore`** — deny the agent access to specific files or directories. `.gitignore` syntax, lives in your project root, and is meant to be committed. `leash` creates it automatically on first run if it doesn't exist:
+- **`.leash_deny`** — deny the agent access to specific files or directories. `.gitignore` syntax, lives in your project root, and is meant to be committed. `leash` creates it automatically on first run if it doesn't exist:
 
   ```
   .env
@@ -48,15 +48,15 @@ Day to day, there are only two files you should ever need to touch:
   *.pem
   ```
 
-  `.nono_ignore` itself is always denied too, so the agent can't read or edit its own rules.
+  `.leash_deny` itself is always denied too, so the agent can't read or edit its own rules.
 
-- **`.nono/<tool>.extra.json`** — revoke a grant the agent picked up from a [post-session save-profile prompt](#post-session-save-profile-prompts). Remove the path from the relevant array and it's back to denied on the next run. The arrays differ in what they grant:
+- **`.leash/<tool>.extra.json`** — revoke a grant the agent picked up from a [post-session save-profile prompt](#post-session-save-profile-prompts). Remove the path from the relevant array and it's back to denied on the next run. The arrays differ in what they grant:
 
   - `allow` — read **and** write access.
   - `read` — read-only access.
   - `write` — write-only access (for directories, this doesn't include deletion).
 
-  All three win over a conflicting `.nono_ignore` deny for the same path — which array a given path landed in just depends on what nono's save-profile prompt (or you, editing this file by hand) put it in.
+  All three win over a conflicting `.leash_deny` deny for the same path — which array a given path landed in just depends on what nono's save-profile prompt (or you, editing this file by hand) put it in.
 
   ```jsonc
   {
@@ -67,17 +67,17 @@ Day to day, there are only two files you should ever need to touch:
   }
   ```
 
-Everything else under `.nono/` is generated and disposable — `leash` rebuilds it as needed and adds `.nono/` to your project's `.gitignore` automatically.
+Everything else under `.leash/` is generated and disposable — `leash` rebuilds it as needed and adds `.leash/` to your project's `.gitignore` automatically.
 
 ## How it works
 
-On each run, `leash` builds a per-project nono profile at `.nono/<tool>.profile.json` — extending the `<tool>` base profile, with `.nono_ignore` compiled into `filesystem.deny` and `.nono/<tool>.extra.json` merged in for anything else. It then runs `<tool>` through `nono run` using that profile. The profile is only rebuilt when `.nono_ignore` or `.nono/<tool>.extra.json` changes.
+On each run, `leash` builds a per-project nono profile at `.leash/<tool>.profile.json` — extending the `<tool>` base profile, with `.leash_deny` compiled into `filesystem.deny` and `.leash/<tool>.extra.json` merged in for anything else. It then runs `<tool>` through `nono run` using that profile. The profile is only rebuilt when `.leash_deny` or `.leash/<tool>.extra.json` changes.
 
 ### Post-session save-profile prompts
 
 nono's own save-profile prompt (shown after a session, for paths the agent tried to access) writes its answers to nono's global config, not to this project's profile. `leash` pulls those choices back in after each run:
 
-- Denied paths under the project are appended to `.nono_ignore`.
-- Everything else (allow/read/write grants, or paths outside the project) goes into `.nono/<tool>.extra.json` instead, since `.nono_ignore` can only express denials scoped to the project.
+- Denied paths under the project are appended to `.leash_deny`.
+- Everything else (allow/read/write grants, or paths outside the project) goes into `.leash/<tool>.extra.json` instead, since `.leash_deny` can only express denials scoped to the project.
 
-Both are folded into `.nono/<tool>.profile.json` on the next rebuild, so choices made at the prompt actually stick — and to walk one back later, edit `.nono/<tool>.extra.json` as described above.
+Both are folded into `.leash/<tool>.profile.json` on the next rebuild, so choices made at the prompt actually stick — and to walk one back later, edit `.leash/<tool>.extra.json` as described above.
