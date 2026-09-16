@@ -94,7 +94,9 @@ Everything else under `.leash/` is generated and disposable — `leash` rebuilds
 
 ## How it works
 
-On each run, `leash` builds a per-project nono profile at `.leash/<tool>.profile.json` — extending the `<tool>` base profile, with `.leash_deny` compiled into `filesystem.deny` and `.leash/<tool>.extra.json` merged in for anything else. It then runs `<tool>` through `nono run` using that profile. The profile is only rebuilt when `.leash_deny` or `.leash/<tool>.extra.json` changes.
+* On each run, `leash` builds a per-project nono profile at `.leash/<tool>.profile.json` — extending the `<tool>` base profile, with `.leash_deny` compiled into `filesystem.deny` and `.leash/<tool>.extra.json` merged in for anything else. 
+* It then runs `<tool>` through `nono run` using that profile. 
+* The profile is only rebuilt when `.leash_deny` or `.leash/<tool>.extra.json` changes.
 
 ### Post-session save-profile prompts
 
