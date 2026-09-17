@@ -5,7 +5,7 @@ project, honoring a .gitignore-style .leash file for deny rules.
 The only external dependencies are `git` and `nono` - JSON is handled with
 the standard library, so `jq` is not required.
 
-Install: ./leash install   (symlinks this file into ~/.local/bin/leash)
+Install: ./cli install   (symlinks this file into ~/.local/bin/leash)
 """
 
 import hashlib

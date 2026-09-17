@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`leash` is a single Python script (`leash`, no extension, `#!/usr/bin/env python3` shebang) that runs a coding agent (`claude`, `codex`, ...) sandboxed with [nono](https://nono.sh), scoped to the current git repository. There is no build step, no package manager, no test suite — the entire project is `./leash` plus generated state under `.leash-agents/`. JSON is handled with the standard library's `json` module, so `jq` is not a dependency.
+`leash` is a single Python script (`cli`, no extension, `#!/usr/bin/env python3` shebang) that runs a coding agent (`claude`, `codex`, ...) sandboxed with [nono](https://nono.sh), scoped to the current git repository. There is no build step, no package manager, no test suite — the entire project is `./cli` plus generated state under `.leash-agents/`. JSON is handled with the standard library's `json` module, so `jq` is not a dependency.
 
 ## Development
 
-- Edit `leash` directly; it's the only source file.
-- Sanity-check changes by running it against a scratch git repo: `./leash claude` (or any tool present on PATH with a matching nono profile).
-- Syntax-check with `python3 -m py_compile leash`.
-- `leash install` symlinks the script to `~/.local/bin/leash` — test install changes by running `./leash install` and confirming the symlink target with `readlink ~/.local/bin/leash`.
+- Edit `cli` directly; it's the only source file.
+- Sanity-check changes by running it against a scratch git repo: `./cli claude` (or any tool present on PATH with a matching nono profile).
+- Syntax-check with `python3 -m py_compile cli`.
+- `./cli install` symlinks the script to `~/.local/bin/leash` — test install changes by running `./cli install` and confirming the symlink target with `readlink ~/.local/bin/leash`.
 
 ## Architecture
 
-Everything happens in one linear script (`leash`):
+Everything happens in one linear script (`cli`):
 
 1. **Arg dispatch** (`main`) — first arg is the tool name (`claude`, `codex`, ...) or the special `install` subcommand. `install` symlinks the script itself into `~/.local/bin` and exits early, before any of the git/nono checks below run.
 2. **Preconditions** — requires `nono`, `git`, and the target tool to be on PATH (`require_cmd`); requires being run from the root of a git repository (not a subdirectory) since `.leash` resolution depends on repo-relative paths.

@@ -37,11 +37,11 @@ nono pull nolabs-ai/codex
 git clone git@github.com:kamasheto/leash.git
 
 # create a symlink from the leash cli
-./leash/leash install
+./leash/cli install
 
 ```
 
-This symlinks `leash` into `~/.local/bin/leash`. Make sure `~/.local/bin` is on your `PATH`.
+This symlinks `~/.local/bin/leash` to `leash/cli`. Make sure `~/.local/bin` is on your `PATH`.
 
 ## Usage
 
