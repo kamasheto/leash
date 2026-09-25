@@ -71,7 +71,12 @@ Day to day, there are only two files you should ever need to touch:
   *.pem
   ```
 
-  `.leash` itself is always denied too, so the agent can't read or edit its own rules.
+  A few paths are always denied, whatever `.leash` says:
+
+  - `.leash` and `.leash-agents/`, so the agent can't read or edit its own rules.
+  - `.git/`, together with the `git` command itself. Without this, any file that is or ever was committed could be read back from history (`git show HEAD:.env`, `git log -p`, or by decompressing `.git/objects` directly), and the agent could plant git hooks or config that later run outside the sandbox. As a result, **the agent has no git access inside `leash`**. Run commits, diffs, and other git operations yourself, outside the sandbox.
+
+  None of these can be re-opened through `.leash-agents/<tool>.extra.json`.
 
 - **`.leash-agents/<tool>.extra.json`** — revoke a grant the agent picked up from a [post-session save-profile prompt](#post-session-save-profile-prompts). Remove the path from the relevant array and it's back to denied on the next run. The arrays differ in what they grant:
 
@@ -94,9 +99,9 @@ Everything else under `.leash-agents/` is generated and disposable — `leash` r
 
 ## How it works
 
-* On each run, `leash` builds a per-project nono profile at `.leash-agents/<tool>.profile.json` — extending the `<tool>` base profile, with `.leash` compiled into `filesystem.deny` and `.leash-agents/<tool>.extra.json` merged in for anything else. 
+* On each run, `leash` builds a per-project nono profile at `.leash-agents/<tool>.profile.json` — extending the `<tool>` base profile, with `.leash` compiled into `filesystem.deny` and `.leash-agents/<tool>.extra.json` merged in for anything else. The always-denied paths (`.leash`, `.leash-agents/`, `.git/`) and a nono `command_policies` rule blocking `git` are added on top.
 * It then runs `<tool>` through `nono run` using that profile. 
-* The profile is only rebuilt when `.leash` or `.leash-agents/<tool>.extra.json` changes.
+* The profile is only rebuilt when `.leash`, `.leash-agents/<tool>.extra.json`, or `leash` itself changes.
 
 ### Post-session save-profile prompts
 
