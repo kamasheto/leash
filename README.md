@@ -7,7 +7,6 @@ Run a coding agent (`claude`, `codex`, ...) sandboxed with [nono](https://nono.s
 ## Requirements
 
 - [nono](https://nono.sh) installed, with a base profile matching your tool name (e.g. `nono profile list` should show `claude` and/or `codex`)
-- `git`
 - Python 3
 
 ## Installation
@@ -49,7 +48,7 @@ This symlinks `~/.local/bin/leash` to `leash/cli`. Make sure `~/.local/bin` is o
 leash <tool> [args...]
 ```
 
-Run from the root of a git repository.
+Run from your project's root directory.
 
 ```sh
 leash claude
@@ -95,7 +94,7 @@ Day to day, there are only two files you should ever need to touch:
   }
   ```
 
-Everything else under `.leash-agents/` is generated and disposable — `leash` rebuilds it as needed and adds `.leash-agents/` to your project's `.gitignore` automatically.
+Everything else under `.leash-agents/` is generated and disposable — `leash` rebuilds it as needed and adds `.leash-agents/` to your project's `.gitignore` automatically (if the project is a git repository).
 
 ## How it works
 

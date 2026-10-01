@@ -3,7 +3,9 @@
 project, honoring a .gitignore-style .leash file for deny rules.
 
 The only external dependencies are `git` and `nono` - JSON is handled with
-the standard library, so `jq` is not required.
+the standard library, so `jq` is not required. The project itself doesn't
+have to be a git repository: .leash patterns are resolved with leash's own
+checkout as the git engine (see compute_deny_paths).
 
 Every generated profile also denies the agent `.git/` and the `git` command
 outright (see ALWAYS_DENY / GIT_COMMAND_POLICY): a file that is (or ever was)
@@ -163,18 +165,47 @@ def run_install() -> None:
 # git-backed .leash resolution
 # ---------------------------------------------------------------------------
 
+def leash_git_dir() -> str:
+    """The git dir of leash's own checkout (where `cli` really lives, past the
+    install symlink). It's borrowed as a pattern-matching engine so the
+    project being sandboxed doesn't have to be a git repository."""
+    leash_root = Path(__file__).resolve().parent
+    result = run_cmd(
+        f"git -C {quote(str(leash_root))} rev-parse --absolute-git-dir",
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        die(f"{leash_root} is not a git checkout. leash borrows its own repository "
+            "to resolve .leash patterns, so install it with 'git clone'.")
+    return result.stdout.strip()
+
+
 def compute_deny_paths(p: Paths) -> list[str]:
-    """Resolve .leash into concrete repo-relative paths to deny, using
+    """Resolve .leash into concrete project-relative paths to deny, using
     git's own gitignore-pattern matcher (negation, **, anchoring) instead of
-    reimplementing it. --directory collapses whole ignored untracked
-    directories into a single entry."""
+    reimplementing it. --directory collapses whole ignored directories into a
+    single entry.
+
+    git runs against leash's own git dir with the project as its work tree,
+    so the project needn't be a git repo. GIT_INDEX_FILE points at a file
+    that doesn't exist, giving git an empty index: leash's tracked files
+    don't leak into the listing, and every project file counts as
+    untracked, so --others covers all of them. ls-files only reads, so
+    leash's checkout is never touched.
+
+    No --no-empty-directory: combined with --directory it makes git drop
+    ignored files whose parent dir isn't itself ignored (`*.env` would miss
+    src/x.env)."""
     if not p.ignore_path.exists():
         return []
-    out = run_cmd(
-        f"git -C {quote(str(p.project_root))} ls-files -z --cached --others "
-        f"--directory --no-empty-directory --ignored --exclude-from={quote(str(p.ignore_path))}",
-        check=True, capture_output=True, text=True,
-    ).stdout
+    with tempfile.TemporaryDirectory(prefix="leash-index-") as tmp:
+        out = run_cmd(
+            f"git -C {quote(str(p.project_root))} --git-dir={quote(leash_git_dir())} "
+            f"--work-tree={quote(str(p.project_root))} ls-files -z --others "
+            f"--directory --ignored --exclude-from={quote(str(p.ignore_path))}",
+            check=True, capture_output=True, text=True,
+            env={**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")},
+        ).stdout
     return [entry.rstrip("/") for entry in out.split("\0") if entry]
 
 
@@ -236,6 +267,8 @@ def needs_rebuild(p: Paths) -> bool:
 # ---------------------------------------------------------------------------
 
 def ensure_gitignore_has_state_dir(project_root: Path) -> None:
+    if not (project_root / ".git").exists():
+        return  # not a git repo: no .gitignore to keep up
     path = project_root / ".gitignore"
     lines = path.read_text().splitlines() if path.exists() else []
     if f"{STATE_DIR}/" in lines:
@@ -439,21 +472,6 @@ def main() -> None:
     require_cmd(tool)
 
     project_root = Path.cwd()
-
-    if run_cmd(
-        f"git -C {quote(str(project_root))} rev-parse --is-inside-work-tree",
-        capture_output=True,
-    ).returncode != 0:
-        die("current directory is not a git repository (leash needs git to resolve "
-            ".leash patterns). Run 'git init' first.")
-
-    repo_root = run_cmd(
-        f"git -C {quote(str(project_root))} rev-parse --show-toplevel",
-        check=True, capture_output=True, text=True,
-    ).stdout.strip()
-    if repo_root != str(project_root):
-        die(f"run leash from the repository root ({repo_root}), not a subdirectory.")
-
     p = Paths(tool=tool, project_root=project_root)
 
     if needs_rebuild(p):
