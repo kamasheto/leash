@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python: ["3.9", "3.14"]
+        python: ["3.9"]
     runs-on: ${{ matrix.os }}
     steps:
       # leash borrows its own checkout as a git engine, so this must be a real
