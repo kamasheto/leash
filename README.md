@@ -168,7 +168,7 @@ Issues and pull requests are welcome.
 
   Add or update tests for any change in behavior. If your change affects what the sandbox allows or denies, add an integration test too. CI runs the unit tests on Linux and macOS, on the oldest and newest Python versions leash supports. It doesn't install nono, so run the integration tests locally.
 - **Before opening a PR**, also run `./cli claude` (or another tool) in a scratch directory, both with and without `git init`. If your change affects the profile, check the generated `.leash-agents/<tool>.profile.json`.
-- **Update the docs.** If you change behavior, update this README and `CLAUDE.md` too.
+- **Update the docs.** If you change behavior, update this README and `AGENTS.md` too.
 
 By contributing, you agree that your contributions are licensed under the project's MIT license.
 
