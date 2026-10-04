@@ -1,0 +1,20 @@
+[project]
+name = "leash"
+version = "0"
+requires-python = ">=3.11"
+
+[dependency-groups]
+dev = ["pytest>=9"]
+
+[tool.uv]
+package = false
+
+[tool.pytest]
+minversion = "9.0"
+testpaths = ["tests"]
+# So tests can `import leash` (leash.py at the repo root).
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers"]
+markers = [
+    "integration: runs leash's generated profiles against the real nono (skipped when nono is not on PATH)",
+]

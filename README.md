@@ -40,10 +40,10 @@ nono pull nolabs-ai/codex
 
 ```sh
 git clone git@github.com:kamasheto/leash.git
-./leash/cli install
+./leash/leash.py install
 ```
 
-`install` symlinks `~/.local/bin/leash` to `leash/cli`. Make sure `~/.local/bin` is on your `PATH`.
+`install` symlinks `~/.local/bin/leash` to `leash/leash.py`. Make sure `~/.local/bin` is on your `PATH`.
 
 > [!NOTE]
 > Install with `git clone`, not by downloading the script on its own. leash uses its own checkout to match `.leash` patterns.
@@ -151,14 +151,15 @@ leash then deletes nono's global copy and rebuilds the profile straight away, so
 
 Issues and pull requests are welcome.
 
-- **Everything is in one file.** leash is the `cli` script, written for the Python 3 standard library. There's no build step and no dependencies to install.
+- **Everything is in one file.** leash is the `leash.py` script, written for the Python 3 standard library. There's no build step and no dependencies to install (pytest is only needed to run the tests).
 - **No third-party packages.** Keep the external tools down to `nono` and `git` (unless there's a good reason otherwise.)
 - **Shell commands** go through `run_cmd()`. Wrap every variable in `quote()`, and never use `shell=True`.
 - **Don't weaken the defaults.** A change that relaxes the [always-denied](#always-denied) rules should be opt-in, like `--with-git`, and explain the trade-off.
-- **Tests** live in `tests/` and use the standard library's `unittest`, so there's nothing to install. Run them all from the repo root:
+- **Tests** live in `tests/` and use [pytest](https://pytest.org), a development-only dependency. With [uv](https://docs.astral.sh/uv/) installed, run them from the repo root:
   ```sh
-  python3 tests                  # every test, listed with its result
-  python3 tests -k integration   # only tests whose name matches
+  uv run pytest                        # every test
+  uv run pytest -m "not integration"   # skip the tests that need nono
+  uv run pytest -k with_git            # only tests whose name matches
   ```
 
   | Suite | Needs | What it checks |
@@ -166,8 +167,8 @@ Issues and pull requests are welcome.
   | `test_cli.py` (unit) | Python, git | leash's logic. nono is stubbed out. Fast. |
   | `test_integration.py` | nono on `PATH` | Generated profiles pass `nono profile validate`, and the real sandbox enforces them (`cat` and `git` run inside nono). Skipped if nono isn't installed. |
 
-  Add or update tests for any change in behavior. If your change affects what the sandbox allows or denies, add an integration test too. CI runs the unit tests on Linux and macOS, on the oldest and newest Python versions leash supports. It doesn't install nono, so run the integration tests locally.
-- **Before opening a PR**, also run `./cli claude` (or another tool) in a scratch directory, both with and without `git init`. If your change affects the profile, check the generated `.leash-agents/<tool>.profile.json`.
+  Add or update tests for any change in behavior. If your change affects what the sandbox allows or denies, add an integration test too. CI runs the unit tests on Linux and macOS, on the oldest Python version leash supports. It doesn't install nono, so run the integration tests locally.
+- **Before opening a PR**, also run `./leash.py claude` (or another tool) in a scratch directory, both with and without `git init`. If your change affects the profile, check the generated `.leash-agents/<tool>.profile.json`.
 - **Update the docs.** If you change behavior, update this README and `AGENTS.md` too.
 
 By contributing, you agree that your contributions are licensed under the project's MIT license.

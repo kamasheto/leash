@@ -17,8 +17,11 @@ jobs:
       # leash borrows its own checkout as a git engine, so this must be a real
       # clone (actions/checkout's default is fine).
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m py_compile cli
-      - run: python tests
+      - run: uv run --locked python -m py_compile leash.py
+      # leash.py's MIN_PYTHON check only works if an older python3 can still parse
+      # the file, so it must stay free of syntax newer than 3.9.
+      - run: uv run --no-project --python 3.9 python -m py_compile leash.py
+      - run: uv run --locked pytest
