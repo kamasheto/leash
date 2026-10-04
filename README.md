@@ -40,7 +40,7 @@ nono pull nolabs-ai/codex
 
 ```sh
 git clone git@github.com:kamasheto/leash.git
-./leash/leash.py install
+./leash/cli install
 ```
 
 `install` symlinks `~/.local/bin/leash` to `leash/leash.py`. Make sure `~/.local/bin` is on your `PATH`.
