@@ -27,6 +27,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Runs before any function is defined, so a too-old python3 (macOS still ships
+# 3.9 as /usr/bin/python3) gets a clear message rather than a confusing
+# failure. Python parses the whole file before running it, so this only helps
+# while the script avoids syntax newer than 3.9 (e.g. `match`, `except*`).
+MIN_PYTHON = (3, 11)
+if sys.version_info < MIN_PYTHON:
+    sys.exit(f"leash: needs Python {'.'.join(map(str, MIN_PYTHON))}+ "
+             f"(found {sys.version.split()[0]} at {sys.executable})")
+
 STATE_DIR = ".leash-agents"
 IGNORE_FILE = ".leash"
 
