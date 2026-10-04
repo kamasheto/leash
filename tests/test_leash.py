@@ -22,12 +22,6 @@ pytestmark = pytest.mark.usefixtures("nono_cfg", "fake_nono")
 
 # --- compute_deny_paths ------------------------------------------------------
 
-# Known bug: when a directory holds only matched files, `git ls-files
-# --directory` also lists the directory itself (`src/` next to `src/b.env`),
-# so the whole directory gets denied. strict: these start failing once fixed.
-OVER_DENY_BUG = pytest.mark.xfail(
-    strict=True, reason="compute_deny_paths denies a dir whose files all match")
-
 def test_no_leash_file_denies_nothing(project):
     assert leash.compute_deny_paths(project.paths()) == []
 
@@ -36,13 +30,13 @@ def test_no_leash_file_denies_nothing(project):
     pytest.param("*.env\n", ["a.env", "main.py"], ["a.env"], id="glob"),
     # Parent dir not ignored: must still match.
     pytest.param("*.env\n", ["src/main.py", "src/b.env"], ["src/b.env"], id="glob-nested"),
-    pytest.param("*.env\n", ["src/b.env"], ["src/b.env"], id="glob-nested-only-match",
-                 marks=OVER_DENY_BUG),
+    # git also lists `src/` itself here; the directory must not be denied.
+    pytest.param("*.env\n", ["src/b.env"], ["src/b.env"], id="glob-nested-only-match"),
     pytest.param("/a.env\n", ["a.env", "src/a.env"], ["a.env"], id="anchored"),
-    pytest.param("src/**/*.env\n", ["a.env", "src/x/y/b.env"], ["src/x/y/b.env"], id="double-star",
-                 marks=OVER_DENY_BUG),
+    pytest.param("src/**/*.env\n", ["a.env", "src/x/y/b.env"], ["src/x/y/b.env"], id="double-star"),
     pytest.param("*.env\n!keep.env\n", ["a.env", "keep.env"], ["a.env"], id="negation"),
     pytest.param("secrets/\n", ["secrets/key.pem"], ["secrets"], id="dir-collapsed"),
+    pytest.param("secrets/*\n", ["secrets/key.pem"], ["secrets/key.pem"], id="dir-contents"),
     # leash's checkout tracks `leash.py` and `README.md`; a same-named project
     # file must still be matched as untracked.
     pytest.param("README.md\n", ["README.md"], ["README.md"], id="leash-own-file-not-shadowed"),

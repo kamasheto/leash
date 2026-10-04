@@ -212,7 +212,10 @@ def compute_deny_paths(p: Paths) -> list[str]:
 
     No --no-empty-directory: combined with --directory it makes git drop
     ignored files whose parent dir isn't itself ignored (`*.env` would miss
-    src/x.env)."""
+    src/x.env). Without it, though, git also lists a directory whose
+    contents are all ignored (`src/` next to `src/x.env`) even though the
+    directory itself doesn't match. A directory that really matches is listed
+    alone, so any directory entry with entries under it is dropped."""
     if not p.ignore_path.exists():
         return []
     with tempfile.TemporaryDirectory(prefix="leash-index-") as tmp:
@@ -223,7 +226,11 @@ def compute_deny_paths(p: Paths) -> list[str]:
             check=True, capture_output=True, text=True,
             env={**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")},
         ).stdout
-    return [entry.rstrip("/") for entry in out.split("\0") if entry]
+    entries = [entry for entry in out.split("\0") if entry]
+    return [
+        entry.rstrip("/") for entry in entries
+        if not (entry.endswith("/") and any(e != entry and e.startswith(entry) for e in entries))
+    ]
 
 
 # ---------------------------------------------------------------------------

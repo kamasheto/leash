@@ -14,7 +14,7 @@ minversion = "9.0"
 testpaths = ["tests"]
 # So tests can `import leash` (leash.py at the repo root).
 pythonpath = ["."]
-addopts = ["-ra", "--strict-markers"]
+addopts = ["-v", "-ra", "--strict-markers"]
 markers = [
     "integration: runs leash's generated profiles against the real nono (skipped when nono is not on PATH)",
 ]
