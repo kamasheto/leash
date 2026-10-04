@@ -16,7 +16,7 @@ The agent can work inside the project, but can't touch anything you list in `.le
 | Requirement | Notes |
 | --- | --- |
 | [nono](https://nono.sh) | Needs a base profile named after your tool. `nono profile list` should show `claude` and/or `codex`. |
-| Python 3.9+ | No third-party packages needed. |
+| Python 3.11+ | No third-party packages needed. |
 | git | Used to match `.leash` patterns. Your project doesn't need to be a git repository. |
 
 ## Installation

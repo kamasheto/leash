@@ -42,21 +42,15 @@ class FakeNono:
 class ProjectTestCase(unittest.TestCase):
     """Each test gets a fresh scratch project dir and a fake nono config dir."""
 
-    def patch(self, patcher):
-        # Like TestCase.enterContext, which needs Python 3.11+.
-        result = patcher.start()
-        self.addCleanup(patcher.stop)
-        return result
-
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix="leash-test-")
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name) / "project"
         self.root.mkdir()
         self.nono_cfg = Path(tmp.name) / "xdg"
-        self.patch(mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.nono_cfg)}))
+        self.enterContext(mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.nono_cfg)}))
         self.nono = FakeNono()
-        self.patch(mock.patch.object(cli, "run_cmd", self.nono))
+        self.enterContext(mock.patch.object(cli, "run_cmd", self.nono))
 
     def paths(self, tool: str = "claude", with_git: bool = False):
         return cli.Paths(tool=tool, project_root=self.root, with_git=with_git)
@@ -252,8 +246,8 @@ class MainTest(ProjectTestCase):
 
     def setUp(self):
         super().setUp()
-        self.patch(mock.patch.object(cli, "require_cmd"))
-        self.patch(mock.patch.object(Path, "cwd", return_value=self.root))
+        self.enterContext(mock.patch.object(cli, "require_cmd"))
+        self.enterContext(mock.patch.object(Path, "cwd", return_value=self.root))
 
     def test_no_args_prints_usage(self):
         code, out, _ = self.run_main()
