@@ -20,7 +20,7 @@ git clone git@github.com:kamasheto/leash.git
 ./leash/cli install
 ```
 
-This installs nono and its `claude`/`codex` profiles if they're missing (it asks first), then symlinks `~/.local/bin/leash`. Make sure `~/.local/bin` is on your `PATH`.
+This installs nono (via brew) and its `claude`/`codex` profiles if they're missing (it asks first), then symlinks `~/.local/bin/leash`. Make sure `~/.local/bin` is on your `PATH`.
 
 Use `git clone` rather than copying the script on its own. leash relies on its own checkout to match `.leash` patterns.
 
