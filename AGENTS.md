@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development
 
-- Edit `leash.py` directly; it's the only source file. `cli` is a committed symlink to it, kept only so installs made before the rename (`~/.local/bin/leash` → `<checkout>/cli`) keep working; don't add anything that depends on it.
+- Edit `leash.py` directly; it's the only source file. `cli` is a committed symlink to it, and it's what `install` points `~/.local/bin/leash` at; keep it.
 - `leash.py` requires Python 3.11+ (`MIN_PYTHON`, checked right after the imports so an old `python3`, like macOS's stock 3.9, gets a clear error). Python parses the whole file before running that check, so don't use syntax newer than 3.9 in `leash.py` (`match`, `except*`, ...); newer *library* features are fine.
 - Run the tests with `uv run pytest` (pytest comes from the `dev` dependency group in `pyproject.toml`, which holds nothing but test config; `leash.py` itself stays stdlib-only). Use `-k <pattern>`, `-x`, `-m integration` / `-m "not integration"` as usual. CI (`.github/workflows/test.yml`, Linux + macOS, Python 3.11, the minimum supported version) runs `uv run --locked pytest` and also checks that `leash.py` still parses under 3.9 (see `MIN_PYTHON` above); it has no nono, so integration tests are skipped there. After changing the dev dependencies, run `uv lock` and commit `uv.lock`.
   - Tests `import leash` directly (`pythonpath = ["."]` in `pyproject.toml`); fixtures patch `leash.<name>` with `monkeypatch`. Don't name a test parameter or local `leash`: it would shadow the module.
@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `tests/test_integration.py` (marked `integration`, skipped unless `nono` is on PATH): builds profiles extending nono's built-in `default` profile (plus `claude`/`codex` when installed), checks they validate, and runs `cat`/`git` inside `nono run` to confirm what's actually readable. It never calls `main()` or `absorb_session_grants`, so it never touches the real `~/.config/nono`. Sandboxed git gets `GIT_CONFIG_GLOBAL=/dev/null` because the `default` base profile can't read `~/.gitconfig`. `test_committed_secret_leaks_through_history` asserts the documented `--with-git` leak; if it starts failing, update the docs.
 - Sanity-check changes by running it against a scratch directory, both with and without `git init`: `./leash.py claude` (or any tool present on PATH with a matching nono profile).
 - Syntax-check with `python3 -m py_compile leash.py`.
-- `./leash.py install` symlinks the script (resolved past any symlink, so always `leash.py`) to `~/.local/bin/leash` — test install changes by running `./leash.py install` and confirming the symlink target with `readlink ~/.local/bin/leash`.
+- `./leash.py install` symlinks `<checkout>/cli` (the checkout is found by resolving the script past any symlink) to `~/.local/bin/leash` — test install changes by running `./leash.py install` and confirming the symlink target with `readlink ~/.local/bin/leash`.
 
 ## Architecture
 

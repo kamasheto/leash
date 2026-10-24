@@ -26,7 +26,7 @@ git clone git@github.com:kamasheto/leash.git
 ./leash/cli install
 ```
 
-`install` first checks for nono and offers (y/n) to run `brew install nono` if it's missing, then offers to `nono pull` the claude and codex base profiles that aren't installed yet. It stops if you decline nono, or if neither profile ends up installed. Then it symlinks `~/.local/bin/leash` to `leash/leash.py`. Make sure `~/.local/bin` is on your `PATH`.
+`install` first checks for nono and offers (y/n) to run `brew install nono` if it's missing, then offers to `nono pull` the claude and codex base profiles that aren't installed yet. It stops if you decline nono, or if neither profile ends up installed. Then it symlinks `~/.local/bin/leash` to `leash/cli` (itself a symlink to `leash.py`). Make sure `~/.local/bin` is on your `PATH`.
 
 > [!NOTE]
 > Install with `git clone`, not by downloading the script on its own. leash uses its own checkout to match `.leash` patterns.

@@ -207,7 +207,8 @@ def ensure_nono() -> None:
 def run_install() -> None:
     ensure_nono()
 
-    self_path = Path(__file__).resolve()
+    # Link to the `cli` symlink next to leash.py rather than leash.py itself.
+    self_path = Path(__file__).resolve().parent / "cli"
     bin_dir = Path.home() / ".local" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
 
