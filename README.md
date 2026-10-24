@@ -2,14 +2,14 @@
 
 # leash
 
-leash runs a coding agent like `claude` or `codex` inside a [nono](https://nono.sh) sandbox that's scoped to the directory you're in.
+Keep your agent on leash.
 
 ```sh
 cd my-project
 leash claude
 ```
 
-The agent can work on the project as usual, but it can't touch anything you've listed in `.leash`.
+leash runs `claude`, `codex` and friends inside a [nono](https://nono.sh) sandbox fenced to the project you're in. The agent gets the whole project to work with. It doesn't get your `.env`, your keys, your git history (by default), or anything else you list in `.leash`.
 
 ## Install
 
@@ -22,7 +22,7 @@ git clone git@github.com:kamasheto/leash.git
 
 This installs nono (via brew) and its `claude`/`codex` profiles if they're missing (it asks first), then symlinks `~/.local/bin/leash`. Make sure `~/.local/bin` is on your `PATH`.
 
-Use `git clone` rather than copying the script on its own. leash relies on its own checkout to match `.leash` patterns.
+Use `git clone` rather than copying the script on its own. leash relies on its own checkout (git engine) to match `.leash` patterns.
 
 ## Usage
 
@@ -36,6 +36,11 @@ leash --with-git claude                  # let the agent use git this session
 ```
 
 leash's own flags go before the tool name. Everything after it is passed through to the tool untouched.
+
+| Option | What it does |
+| --- | --- |
+| `--with-git` | Lets the agent run `git` and read `.git/` for this session. Off by default, see [below](#keeping-things-out-leash) for why. |
+| `-h`, `--help` | Show usage |
 
 ## Keeping things out: `.leash`
 
