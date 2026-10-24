@@ -16,11 +16,26 @@ leash runs `claude`, `codex` and friends inside a [nono](https://nono.sh) sandbo
 You'll need Python 3.11+ and git. Then:
 
 ```sh
-git clone git@github.com:kamasheto/leash.git
-./leash/cli install
+bash -c "$(curl -fsSL https://sakr.me/leash-install)"
 ```
 
-This installs nono (via brew) and its `claude`/`codex` profiles if they're missing (it asks first), then symlinks `~/.local/bin/leash`. Make sure `~/.local/bin` is on your `PATH`.
+The [installer](install.sh) asks before each change it makes:
+
+1. Clones leash into `~/.local/share/leash`, or updates the clone if it's already there.
+2. Installs nono (via brew) and its `claude`/`codex` profiles if they're missing.
+3. Symlinks `~/.local/bin/leash`.
+4. Adds `~/.local/bin` to your `PATH` if it isn't already there. It edits the startup file of your login shell, plus any other shell you've already set up: `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or `~/.config/fish/conf.d/leash.fish`. Files that already mention `~/.local/bin` are left alone.
+
+To update, run the same command again.
+
+### Manual install
+
+If you'd rather not pipe a script into bash, do the same steps by hand:
+
+```sh
+git clone https://github.com/kamasheto/leash.git ~/.local/share/leash
+~/.local/share/leash/cli install
+```
 
 Use `git clone` rather than copying the script on its own. leash relies on its own checkout (git engine) to match `.leash` patterns.
 

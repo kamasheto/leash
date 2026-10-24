@@ -362,3 +362,153 @@ def test_install_stops_before_symlink_when_nono_declined(install_env, tmp_path, 
     with pytest.raises(SystemExit):
         leash.run_install()
     assert not (tmp_path / ".local" / "bin" / "leash").exists()
+
+
+# --- install: PATH setup -----------------------------------------------------
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """A scratch $HOME with no ZDOTDIR and a Linux-style bash setup, where
+    every confirm() is answered yes (override with `answer`)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("ZDOTDIR", raising=False)
+    monkeypatch.setattr(leash.sys, "platform", "linux")
+    monkeypatch.setattr(leash, "confirm", lambda question: True)
+    return tmp_path
+
+
+def answer(monkeypatch, yes):
+    """Answers every confirm() with `yes`, recording the questions asked."""
+    questions = []
+
+    def fake_confirm(question):
+        questions.append(question)
+        return yes
+    monkeypatch.setattr(leash, "confirm", fake_confirm)
+    return questions
+
+
+@pytest.mark.parametrize("shell, rc", [
+    ("/bin/zsh", ".zshrc"),
+    ("/bin/bash", ".bashrc"),
+    ("/usr/bin/fish", ".config/fish/conf.d/leash.fish"),
+])
+def test_path_added_for_login_shell(home, monkeypatch, shell, rc):
+    monkeypatch.setenv("SHELL", shell)
+    leash.add_bin_dir_to_path()
+    assert leash.PATH_MARKER in (home / rc).read_text()
+    assert [f.name for f in home.iterdir() if f.is_file()] == ([rc] if "/" not in rc else [])
+
+
+def test_path_added_for_other_set_up_shells(home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    (home / ".bashrc").write_text("alias ll='ls -l'")  # no trailing newline
+    leash.add_bin_dir_to_path()
+    assert (home / ".bashrc").read_text() == (
+        f"alias ll='ls -l'\n\n{leash.PATH_MARKER}\n{leash.POSIX_PATH_LINE}\n")
+    assert leash.PATH_MARKER in (home / ".zshrc").read_text()
+
+
+def test_path_bash_on_macos_uses_bash_profile(home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setattr(leash.sys, "platform", "darwin")
+    leash.add_bin_dir_to_path()
+    assert leash.PATH_MARKER in (home / ".bash_profile").read_text()
+    assert not (home / ".bashrc").exists()
+
+
+def test_path_zsh_honors_zdotdir(home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("ZDOTDIR", str(home / "zsh"))
+    leash.add_bin_dir_to_path()
+    assert leash.PATH_MARKER in (home / "zsh" / ".zshrc").read_text()
+
+
+def test_path_not_added_twice(home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    (home / ".zshrc").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
+    questions = answer(monkeypatch, True)
+    leash.add_bin_dir_to_path()
+    leash.add_bin_dir_to_path()
+    assert (home / ".zshrc").read_text() == 'export PATH="$HOME/.local/bin:$PATH"\n'
+    assert questions == []
+
+
+def test_path_declined_leaves_files_alone(home, monkeypatch, capsys):
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    (home / ".bashrc").write_text("alias ll='ls -l'\n")
+    questions = answer(monkeypatch, False)
+    leash.add_bin_dir_to_path()
+    assert len(questions) == 1 and ".zshrc" in questions[0] and ".bashrc" in questions[0]
+    assert not (home / ".zshrc").exists()
+    assert (home / ".bashrc").read_text() == "alias ll='ls -l'\n"
+    assert "export PATH=" in capsys.readouterr().out
+
+
+def test_path_unknown_shell_only_warns(home, monkeypatch, capsys):
+    monkeypatch.setenv("SHELL", "/usr/bin/nu")
+    leash.add_bin_dir_to_path()
+    assert list(home.iterdir()) == []
+    assert "doesn't know your shell" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("line", [leash.POSIX_PATH_LINE])
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+def test_posix_path_line_is_idempotent(shell, line, home):
+    from shutil import which
+    if which(shell) is None:
+        pytest.skip(f"{shell} not installed")
+    out = leash.subprocess.run(
+        [shell, "-c", f'PATH=/usr/bin:/bin; {line}; {line}; echo "$PATH"'],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert out == f"{home}/.local/bin:/usr/bin:/bin"
+
+
+# --- install: symlink --------------------------------------------------------
+
+@pytest.fixture
+def install_home(home, monkeypatch):
+    """`home`, with nono already set up and ~/.local/bin off PATH."""
+    monkeypatch.setattr(leash, "ensure_nono", lambda: None)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    return home
+
+
+def cli_path():
+    return Path(leash.__file__).resolve().parent / "cli"
+
+
+def test_install_creates_symlink_and_path(install_home):
+    leash.run_install()
+    assert (install_home / ".local" / "bin" / "leash").readlink() == cli_path()
+    assert leash.PATH_MARKER in (install_home / ".zshrc").read_text()
+
+
+def test_install_declined_changes_nothing(install_home, monkeypatch):
+    questions = answer(monkeypatch, False)
+    leash.run_install()
+    assert len(questions) == 1  # the symlink; PATH isn't offered without it
+    assert not (install_home / ".local").exists()
+    assert not (install_home / ".zshrc").exists()
+
+
+def test_install_replaces_other_symlink_only_if_confirmed(install_home, monkeypatch):
+    target = install_home / ".local" / "bin" / "leash"
+    target.parent.mkdir(parents=True)
+    target.symlink_to("/somewhere/else")
+    questions = answer(monkeypatch, False)
+    leash.run_install()
+    assert questions[0].startswith("Replace ")
+    assert target.readlink() == Path("/somewhere/else")
+
+
+def test_install_existing_symlink_needs_no_prompt(install_home, monkeypatch):
+    target = install_home / ".local" / "bin" / "leash"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(cli_path())
+    monkeypatch.setenv("PATH", f"{target.parent}:/usr/bin")
+    questions = answer(monkeypatch, True)
+    leash.run_install()
+    assert questions == []

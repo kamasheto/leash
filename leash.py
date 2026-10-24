@@ -14,7 +14,9 @@ database (`git show HEAD:<file>`, `git log -p`, or just zlib-decompressing
 .git/objects), no matter what .leash denies in the working tree. Pass
 --with-git to opt out of that for a session.
 
-Install: ./leash.py install   (symlinks this file into ~/.local/bin/leash)
+Install: ./leash.py install   (symlinks this file into ~/.local/bin/leash and
+puts ~/.local/bin on PATH in your shell's startup file; install.sh clones the
+repo to ~/.local/share/leash and runs this for you)
 """
 
 import hashlib
@@ -210,17 +212,77 @@ def run_install() -> None:
     # Link to the `cli` symlink next to leash.py rather than leash.py itself.
     self_path = Path(__file__).resolve().parent / "cli"
     bin_dir = Path.home() / ".local" / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-
     target = bin_dir / "leash"
-    target.unlink(missing_ok=True)
-    target.symlink_to(self_path)
-    print(f"leash: symlinked {self_path} -> {target}")
+
+    if target.is_symlink() and target.readlink() == self_path:
+        print(f"leash: {target} already points at {self_path}")
+    else:
+        action = "Replace" if target.exists() or target.is_symlink() else "Create"
+        if not confirm(f"{action} {target} as a symlink to {self_path}?"):
+            print(f"leash: skipped the symlink; run {self_path} directly instead.")
+            return
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        target.unlink(missing_ok=True)
+        target.symlink_to(self_path)
+        print(f"leash: symlinked {self_path} -> {target}")
 
     path_env = f":{os.environ.get('PATH', '')}:"
     if f":{bin_dir}:" not in path_env:
-        print(f"leash: warning: {bin_dir} is not on your PATH. "
-              f"Add it, e.g.: export PATH=\"{bin_dir}:$PATH\"")
+        add_bin_dir_to_path()
+
+
+PATH_MARKER = "# Added by leash: put ~/.local/bin on PATH"
+POSIX_PATH_LINE = 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+FISH_PATH_LINE = "fish_add_path -g $HOME/.local/bin"
+
+
+def shell_rc_files() -> list[tuple[Path, str]]:
+    """The startup files to put ~/.local/bin on PATH in, each with the line to
+    add: those of the login shell ($SHELL), created if missing, plus those of
+    any other shell (zsh, bash, fish) that's already set up."""
+    home = Path.home()
+    login_shell = Path(os.environ.get("SHELL", "")).name
+    zdotdir = Path(os.environ.get("ZDOTDIR", home))
+    # Terminal windows on macOS start bash as a login shell, which reads
+    # .bash_profile but not .bashrc.
+    bash_rc = home / (".bash_profile" if sys.platform == "darwin" else ".bashrc")
+    fish_dir = home / ".config" / "fish"
+    candidates = {
+        "zsh": (zdotdir / ".zshrc", POSIX_PATH_LINE, (zdotdir / ".zshrc").exists()),
+        "bash": (bash_rc, POSIX_PATH_LINE, bash_rc.exists()),
+        "fish": (fish_dir / "conf.d" / "leash.fish", FISH_PATH_LINE, fish_dir.exists()),
+    }
+    return [(rc, line) for shell, (rc, line, set_up) in candidates.items()
+            if set_up or shell == login_shell]
+
+
+def add_bin_dir_to_path() -> None:
+    """Offers to append a line putting ~/.local/bin on PATH to each shell
+    startup file (see shell_rc_files) that doesn't mention ~/.local/bin yet."""
+    manual_hint = 'Add it yourself, e.g.: export PATH="$HOME/.local/bin:$PATH"'
+    rc_files = shell_rc_files()
+    if not rc_files:
+        print(f"leash: warning: ~/.local/bin is not on your PATH and leash doesn't "
+              f"know your shell. {manual_hint}")
+        return
+    pending = [(rc, line) for rc, line in rc_files
+               if not rc.exists() or ".local/bin" not in rc.read_text()]
+    if not pending:
+        print("leash: ~/.local/bin is already in your shell's startup files; "
+              "open a new terminal to use 'leash'.")
+        return
+    names = ", ".join(str(rc) for rc, _ in pending)
+    if not confirm(f"~/.local/bin is not on your PATH. Add it in {names}?"):
+        print(f"leash: left your PATH alone. {manual_hint}")
+        return
+    for rc, line in pending:
+        text = rc.read_text() if rc.exists() else ""
+        rc.parent.mkdir(parents=True, exist_ok=True)
+        separator = "\n" if text and not text.endswith("\n") else ""
+        with rc.open("a") as f:
+            f.write(f"{separator}\n{PATH_MARKER}\n{line}\n")
+        print(f"leash: added ~/.local/bin to PATH in {rc}")
+    print("leash: open a new terminal to use 'leash'.")
 
 
 # ---------------------------------------------------------------------------
