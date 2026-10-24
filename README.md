@@ -16,7 +16,7 @@ leash runs `claude`, `codex` and friends inside a [nono](https://nono.sh) sandbo
 You'll need Python 3.11+ and git. Then:
 
 ```sh
-bash -c "$(curl -fsSL https://sakr.me/leash-install)"
+curl -fsSL https://sakr.me/leash-install | bash
 ```
 
 The [installer](install.sh) asks before each change it makes:
