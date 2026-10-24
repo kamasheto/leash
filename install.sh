@@ -44,56 +44,6 @@ confirm() {
     esac
 }
 
-# Draws "  <label> [██████░░░░] 60%" over the current line.
-bar() {
-    local label=$1 pct=$2 width=30 filled i done_part="" todo_part=""
-    filled=$((pct * width / 100))
-    for ((i = 0; i < filled; i++)); do done_part+="█"; done
-    for ((i = filled; i < width; i++)); do todo_part+="░"; done
-    printf '\r  %s [%s%s] %3d%%' "$label" "$done_part" "$todo_part" "$pct"
-}
-
-# Turns git's --progress output on stdin into a bar: receiving objects fills
-# the first 90%, resolving deltas the rest. git redraws each line with \r, so
-# chunks are split on \r and only the last line of each is looked at.
-show_git_progress() {
-    local label=$1 chunk line pct
-    while IFS= read -r -d $'\r' chunk || [ -n "$chunk" ]; do
-        line=${chunk##*$'\n'}
-        case "$line" in
-            "Receiving objects:"* | "Unpacking objects:"*) pct=$((9 * $(percent "$line") / 10)) ;;
-            "Resolving deltas:"*) pct=$((90 + $(percent "$line") / 10)) ;;
-            *) continue ;;
-        esac
-        bar "$label" "$pct"
-    done
-}
-
-# "Receiving objects:  45% (9/20)" -> 45
-percent() {
-    local p=${1#*:}
-    p=${p%%%*}
-    echo $((10#${p// /}))
-}
-
-# Runs git with a progress bar labeled $1 (when on a terminal), keeping its
-# output out of sight unless it fails.
-run_git() {
-    local label=$1 log status=0
-    shift
-    log=$(mktemp)
-    if [ -t 1 ]; then
-        bar "$label" 0
-        git "$@" 2>&1 | tee "$log" | show_git_progress "$label" || status=$?
-        printf '\r\033[K'
-    else
-        git "$@" >"$log" 2>&1 || status=$?
-    fi
-    [ "$status" -eq 0 ] || cat "$log" >&2
-    rm -f "$log"
-    return "$status"
-}
-
 main() {
     printf '%sInstalling leash%s\n' "$BOLD" "$RESET"
 
@@ -108,7 +58,7 @@ main() {
     if [ -d "$LEASH_DIR/.git" ]; then
         confirm "Update the leash checkout in $LEASH_DIR_SHOWN (git pull)?" ||
             die "installation stopped."
-        run_git "Updating" -C "$LEASH_DIR" pull --ff-only --progress ||
+        git -C "$LEASH_DIR" pull --ff-only ||
             die "couldn't update $LEASH_DIR_SHOWN."
         ok "Updated leash in $LEASH_DIR_SHOWN"
     elif [ -e "$LEASH_DIR" ]; then
@@ -116,7 +66,7 @@ main() {
     else
         confirm "Clone leash into $LEASH_DIR_SHOWN?" || die "installation stopped."
         mkdir -p "$(dirname "$LEASH_DIR")"
-        run_git "Cloning " clone --progress "$REPO_URL" "$LEASH_DIR" ||
+        git clone "$REPO_URL" "$LEASH_DIR" ||
             die "couldn't clone $REPO_URL."
         ok "Cloned leash into $LEASH_DIR_SHOWN"
     fi
