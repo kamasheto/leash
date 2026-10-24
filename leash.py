@@ -162,7 +162,51 @@ def unique_sorted(items: list[str]) -> list[str]:
 # install subcommand
 # ---------------------------------------------------------------------------
 
+# Base nono profiles leash knows how to fetch, keyed by the tool they're for
+# (the README's install instructions).
+NONO_PACKS = {"claude": "nolabs-ai/claude", "codex": "nolabs-ai/codex"}
+
+
+def confirm(question: str) -> bool:
+    """Asks a y/n question on the terminal; anything but y/yes (or EOF) is no."""
+    try:
+        answer = input(f"leash: {question} (y/n) ")
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
+def has_nono_profile(name: str) -> bool:
+    return run_cmd(f"nono profile show {quote(name)}", capture_output=True).returncode == 0
+
+
+def ensure_nono() -> None:
+    """Offers to install nono and the claude/codex base profiles, dying if
+    nono is declined or neither profile ends up installed."""
+    from shutil import which
+    if which("nono") is None:
+        if not confirm("nono is not installed. Install it with 'brew install nono'?"):
+            die("nono is required; installation stopped.")
+        require_cmd("brew")
+        if run_cmd("brew install nono").returncode != 0:
+            die("'brew install nono' failed; installation stopped.")
+
+    installed = []
+    for tool, pack in NONO_PACKS.items():
+        if has_nono_profile(tool):
+            installed.append(tool)
+        elif confirm(f"Install the nono {tool} profile with 'nono pull {pack}'?"):
+            if run_cmd(f"nono pull {quote(pack)}").returncode == 0:
+                installed.append(tool)
+            else:
+                print(f"leash: warning: 'nono pull {pack}' failed.", file=sys.stderr)
+    if not installed:
+        die(f"no nono profile for {' or '.join(NONO_PACKS)} is installed; installation stopped.")
+
+
 def run_install() -> None:
+    ensure_nono()
+
     self_path = Path(__file__).resolve()
     bin_dir = Path.home() / ".local" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)

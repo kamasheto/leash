@@ -269,3 +269,96 @@ def test_tool_exit_code_is_propagated(project, run_main, fake_nono):
     fake_nono.returncode = 3
     code, _, _ = run_main("claude")
     assert code == 3
+
+
+# --- install: ensure_nono ----------------------------------------------------
+
+class FakeInstall:
+    """Stands in for leash.run_cmd during install: `nono profile show <name>`
+    succeeds only for profiles in `profiles`; `brew install` / `nono pull`
+    succeed unless listed in `failing`. Every call is recorded."""
+
+    def __init__(self, profiles=(), failing=()):
+        self.profiles = set(profiles)
+        self.failing = set(failing)
+        self.calls: list[str] = []
+
+    def __call__(self, cmd: str, **kwargs):
+        self.calls.append(cmd)
+        if cmd.startswith("nono profile show "):
+            ok = cmd.split()[-1] in self.profiles
+        else:
+            ok = cmd not in self.failing
+        return leash.subprocess.CompletedProcess(cmd, 0 if ok else 1)
+
+
+@pytest.fixture
+def install_env(monkeypatch):
+    """Returns setup(answers, nono_on_path, profiles, failing) -> FakeInstall,
+    with input() answering from `answers` in order (EOF once exhausted)."""
+    def setup(answers=(), nono_on_path=True, profiles=(), failing=()):
+        fake = FakeInstall(profiles, failing)
+        monkeypatch.setattr(leash, "run_cmd", fake)
+        on_path = {"brew", "nono"} if nono_on_path else {"brew"}
+        monkeypatch.setattr("shutil.which", lambda name: f"/bin/{name}" if name in on_path else None)
+        queue = list(answers)
+
+        def fake_input(prompt):
+            if not queue:
+                raise EOFError
+            return queue.pop(0)
+        monkeypatch.setattr("builtins.input", fake_input)
+        return fake
+    return setup
+
+
+def test_ensure_nono_declined_stops(install_env):
+    fake = install_env(answers=["n"], nono_on_path=False)
+    with pytest.raises(SystemExit):
+        leash.ensure_nono()
+    assert fake.calls == []
+
+
+def test_ensure_nono_installs_nono_then_profiles(install_env):
+    fake = install_env(answers=["y", "y", "n"], nono_on_path=False)
+    leash.ensure_nono()
+    assert "brew install nono" in fake.calls
+    assert "nono pull nolabs-ai/claude" in fake.calls
+    assert "nono pull nolabs-ai/codex" not in fake.calls
+
+
+def test_ensure_nono_brew_failure_stops(install_env):
+    install_env(answers=["y"], nono_on_path=False, failing={"brew install nono"})
+    with pytest.raises(SystemExit):
+        leash.ensure_nono()
+
+
+def test_ensure_nono_existing_profiles_skip_prompts(install_env):
+    fake = install_env(profiles={"claude", "codex"})  # input() would EOF -> no
+    leash.ensure_nono()
+    assert not any(c.startswith("nono pull") or c.startswith("brew") for c in fake.calls)
+
+
+@pytest.mark.parametrize("answers, failing", [
+    pytest.param(["n", "n"], (), id="both-declined"),
+    pytest.param(["y", "y"], {"nono pull nolabs-ai/claude", "nono pull nolabs-ai/codex"},
+                 id="both-pulls-fail"),
+])
+def test_ensure_nono_no_profile_stops(install_env, answers, failing):
+    install_env(answers=answers, failing=failing)
+    with pytest.raises(SystemExit):
+        leash.ensure_nono()
+
+
+def test_ensure_nono_one_profile_is_enough(install_env):
+    fake = install_env(answers=["n", "y"])
+    leash.ensure_nono()
+    assert "nono pull nolabs-ai/codex" in fake.calls
+
+
+def test_install_stops_before_symlink_when_nono_declined(install_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    install_env(answers=["n"], nono_on_path=False)
+    with pytest.raises(SystemExit):
+        leash.run_install()
+    assert not (tmp_path / ".local" / "bin" / "leash").exists()

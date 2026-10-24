@@ -21,29 +21,12 @@ The agent can work inside the project, but can't touch anything you list in `.le
 
 ## Installation
 
-<details>
-  <summary>Install nono first, if you don't have it (click to expand)</summary>
-  <blockquote>
-    <sub>Latest instructions at https://nono.sh</sub>
-
-```sh
-brew install nono
-
-# if needed: base profile for claude
-nono pull nolabs-ai/claude
-
-# if needed: base profile for codex
-nono pull nolabs-ai/codex
-```
-  </blockquote>
-</details>
-
 ```sh
 git clone git@github.com:kamasheto/leash.git
 ./leash/cli install
 ```
 
-`install` symlinks `~/.local/bin/leash` to `leash/leash.py`. Make sure `~/.local/bin` is on your `PATH`.
+`install` first checks for nono and offers (y/n) to run `brew install nono` if it's missing, then offers to `nono pull` the claude and codex base profiles that aren't installed yet. It stops if you decline nono, or if neither profile ends up installed. Then it symlinks `~/.local/bin/leash` to `leash/leash.py`. Make sure `~/.local/bin` is on your `PATH`.
 
 > [!NOTE]
 > Install with `git clone`, not by downloading the script on its own. leash uses its own checkout to match `.leash` patterns.
