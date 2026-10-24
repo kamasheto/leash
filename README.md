@@ -2,70 +2,44 @@
 
 # leash
 
-Run a coding agent (`claude`, `codex`, ...) sandboxed with [nono](https://nono.sh), scoped to the current project.
+leash runs a coding agent like `claude` or `codex` inside a [nono](https://nono.sh) sandbox that's scoped to the directory you're in.
 
 ```sh
 cd my-project
 leash claude
 ```
 
-The agent can work inside the project, but can't touch anything you list in `.leash`.
+The agent can work on the project as usual, but it can't touch anything you've listed in `.leash`.
 
-## Requirements
+## Install
 
-| Requirement | Notes |
-| --- | --- |
-| [nono](https://nono.sh) | Needs a base profile named after your tool. `nono profile list` should show `claude` and/or `codex`. |
-| Python 3.11+ | No third-party packages needed. |
-| git | Used to match `.leash` patterns. Your project doesn't need to be a git repository. |
-
-## Installation
+You'll need Python 3.11+ and git. Then:
 
 ```sh
 git clone git@github.com:kamasheto/leash.git
 ./leash/cli install
 ```
 
-`install` first checks for nono and offers (y/n) to run `brew install nono` if it's missing, then offers to `nono pull` the claude and codex base profiles that aren't installed yet. It stops if you decline nono, or if neither profile ends up installed. Then it symlinks `~/.local/bin/leash` to `leash/cli` (itself a symlink to `leash.py`). Make sure `~/.local/bin` is on your `PATH`.
+This installs nono and its `claude`/`codex` profiles if they're missing (it asks first), then symlinks `~/.local/bin/leash`. Make sure `~/.local/bin` is on your `PATH`.
 
-> [!NOTE]
-> Install with `git clone`, not by downloading the script on its own. leash uses its own checkout to match `.leash` patterns.
+Use `git clone` rather than copying the script on its own. leash relies on its own checkout to match `.leash` patterns.
 
 ## Usage
 
+Run it from your project root:
+
+```sh
+leash claude
+leash codex
+leash claude -p "fix the failing test"   # arguments go straight to the tool
+leash --with-git claude                  # let the agent use git this session
 ```
-leash [options] <tool> [args...]
-```
 
-Run it from your project's root directory. leash's options go **before** `<tool>`. Everything after `<tool>` is passed to the tool unchanged.
+leash's own flags go before the tool name. Everything after it is passed through to the tool untouched.
 
-| Command | What it does |
-| --- | --- |
-| `leash claude` | Run Claude Code in the sandbox |
-| `leash codex` | Run Codex in the sandbox |
-| `leash claude -p "fix the failing test"` | Pass arguments through to the tool |
-| `leash --with-git claude` | Run with git access for this session |
-| `leash install` | Symlink leash into `~/.local/bin` |
-| `leash [--help]`  | Show usage |
+## Keeping things out: `.leash`
 
-### Options
-
-| Option | Effect |
-| --- | --- |
-| `--with-git` | Lets the agent use `git` and access `.git/` for this session. Both are denied by default; see [Always denied](#always-denied) for why. |
-
-## Configuring access
-
-Day to day, there are only two files you should ever need to touch:
-
-| File | Purpose | Commit it? |
-| --- | --- | --- |
-| `.leash` | Files and directories the agent must not access | Yes |
-| `.leash-agents/<tool>.extra.json` | Extra grants picked up from nono's save-profile prompt | No (auto-gitignored) |
-
-### `.leash`
-
-Uses `.gitignore` syntax and lives in your project root. leash creates it on the first run if it doesn't exist.
+`.leash` sits in your project root and uses `.gitignore` syntax. leash creates an empty one on first run.
 
 ```gitignore
 .env
@@ -73,89 +47,38 @@ secrets/
 *.pem
 ```
 
-### Always denied
+Commit it, so everyone working on the project gets the same rules.
 
-Some paths are denied whatever `.leash` says. Nothing in `extra.json` can re-open them.
+A few things are always off limits, whatever `.leash` says:
 
-| Path | Why | Lift with |
-| --- | --- | --- |
-| `.leash`, `.leash-agents/` | So the agent can't read or edit its own rules | — |
-| `.git/` and the `git` command | Any file that is or ever was committed could otherwise be read back from history (`git show HEAD:.env`, `git log -p`, or by decompressing `.git/objects`). The agent could also plant git hooks or config that later run **outside** the sandbox. | `--with-git` |
+- `.leash` and `.leash-agents/`, so the agent can't rewrite its own rules.
+- `.git/` and the `git` command. Anything that was ever committed can be read back out of history (think `git show HEAD:.env`), and a writable `.git` lets the agent plant hooks that later run outside the sandbox.
 
-By default **the agent has no git access inside leash**. You can run commits, diffs and other git commands yourself, outside the sandbox. You can also pass `--with-git` for a session, but that brings back both risks above.
+So by default the agent has no git access. You do the commits yourself. If you'd rather let it run git for a session, pass `--with-git`, but know that it reopens both of those holes.
 
-### `.leash-agents/<tool>.extra.json`
+## nono's save prompt
 
-This file holds grants the agent picked up from a [post-session save-profile prompt](#post-session-save-profile-prompts). To revoke one, remove the path from its array. It's denied again on the next run.
+When a session ends, nono may ask whether to remember access to paths the agent tried to use. nono normally saves those answers to its own global config, where they'd never apply to this project. leash moves them into the project instead: denials inside the project are appended to `.leash`, and everything else goes into `.leash-agents/<tool>.extra.json`.
 
-```jsonc
-{
-  "deny": [],
-  "allow": ["/some/path/the/agent/was/granted"],
-  "read": [],
-  "write": []
-}
-```
+To revoke something you granted, remove it from `extra.json`. It'll be blocked again on the next run.
 
-| Array | Grants |
-| --- | --- |
-| `allow` | Read **and** write access |
-| `read` | Read-only access |
-| `write` | Write-only access (for directories, not deletion) |
-| `deny` | Denials that `.leash` can't express, such as paths outside the project |
-
-If a path appears both here (in `allow`, `read` or `write`) and in `.leash`, this file wins.
-
-Everything else under `.leash-agents/` is generated and disposable. leash rebuilds it as needed and adds `.leash-agents/` to your project's `.gitignore` (if the project is a git repository).
-
-## How it works
-
-1. **Build a profile.** leash writes a per-project nono profile to `.leash-agents/<tool>.profile.json`. It extends your `<tool>` base profile with:
-   - the patterns in `.leash`,
-   - the grants in `extra.json`,
-   - the [always-denied](#always-denied) paths.
-
-   The profile is only rebuilt when `.leash`, `extra.json`, leash itself, or the `--with-git` setting changes.
-2. **Run the tool.** It runs `<tool>` through `nono run` with that profile.
-3. **Absorb prompt answers.** After the session, it pulls your answers to nono's save-profile prompt back into the project (see below).
-
-### Post-session save-profile prompts
-
-After a session, nono may ask whether to save access to paths the agent tried to use. nono saves those answers to its own global config, not to this project. On its own, that means the answers would never apply to the next leash run. So after each run, leash pulls them back in:
-
-| Answer | Where it goes |
-| --- | --- |
-| Deny a path inside the project | Appended to `.leash` |
-| Anything else (allow/read/write, or paths outside the project) | `.leash-agents/<tool>.extra.json` |
-
-leash then deletes nono's global copy and rebuilds the profile straight away, so your answers apply from the next run onwards.
+Everything else under `.leash-agents/` is generated and safe to delete. leash adds the directory to your `.gitignore` for you.
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and PRs are welcome. The whole thing is one stdlib-only Python file, `leash.py`, and I'd like to keep it that way: no third-party packages, and no external tools beyond nono and git.
 
-- **Everything is in one file.** leash is the `leash.py` script, written for the Python 3 standard library. There's no build step and no dependencies to install (pytest is only needed to run the tests).
-- **No third-party packages.** Keep the external tools down to `nono` and `git` (unless there's a good reason otherwise.)
-- **Shell commands** go through `run_cmd()`. Wrap every variable in `quote()`, and never use `shell=True`.
-- **Don't weaken the defaults.** A change that relaxes the [always-denied](#always-denied) rules should be opt-in, like `--with-git`, and explain the trade-off.
-- **Tests** live in `tests/` and use [pytest](https://pytest.org), a development-only dependency. With [uv](https://docs.astral.sh/uv/) installed, run them from the repo root:
-  ```sh
-  uv run pytest                        # every test
-  uv run pytest -m "not integration"   # skip the tests that need nono
-  uv run pytest -k with_git            # only tests whose name matches
-  ```
+Run the tests with [uv](https://docs.astral.sh/uv/):
 
-  | Suite | Needs | What it checks |
-  | --- | --- | --- |
-  | `test_cli.py` (unit) | Python, git | leash's logic. nono is stubbed out. Fast. |
-  | `test_integration.py` | nono on `PATH` | Generated profiles pass `nono profile validate`, and the real sandbox enforces them (`cat` and `git` run inside nono). Skipped if nono isn't installed. |
+```sh
+uv run pytest                        # everything
+uv run pytest -m "not integration"   # skip the ones that need nono
+```
 
-  Add or update tests for any change in behavior. If your change affects what the sandbox allows or denies, add an integration test too. CI runs the unit tests on Linux and macOS, on the oldest Python version leash supports. It doesn't install nono, so run the integration tests locally.
-- **Before opening a PR**, also run `./leash.py claude` (or another tool) in a scratch directory, both with and without `git init`. If your change affects the profile, check the generated `.leash-agents/<tool>.profile.json`.
-- **Update the docs.** If you change behavior, update this README and `AGENTS.md` too.
+CI doesn't have nono, so run the integration tests locally if your change affects what the sandbox allows. Anything that loosens the always-denied rules should be opt-in, like `--with-git`.
 
-By contributing, you agree that your contributions are licensed under the project's MIT license.
+See [AGENTS.md](AGENTS.md) for how the code is laid out.
 
 ## License
 
-[MIT](LICENSE) © 2026 Mahmoud Sakr
+[MIT](LICENSE) © Mahmoud Sakr
