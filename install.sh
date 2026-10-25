@@ -4,7 +4,7 @@
 # ~/.local/bin/leash and puts ~/.local/bin on PATH. Every step that changes
 # anything asks first.
 #
-#   curl -fsSL https://sakr.me/install-leash | bash
+#   curl -fsSL https://kamasheto.dev/install-leash | bash
 #
 # The script arrives on stdin, so prompts read from /dev/tty instead. Piping
 # (rather than `bash -c "$(curl ...)"`) keeps the script out of bash's
