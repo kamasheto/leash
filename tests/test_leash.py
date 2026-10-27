@@ -303,7 +303,8 @@ def install_env(monkeypatch):
         monkeypatch.setattr("shutil.which", lambda name: f"/bin/{name}" if name in on_path else None)
         queue = list(answers)
 
-        def fake_input(prompt):
+        def fake_input(prompt):  # like input() without a terminal: no echo
+            sys.stdout.write(prompt)
             if not queue:
                 raise EOFError
             return queue.pop(0)
@@ -392,7 +393,98 @@ def test_update_failure_continues(install_env, capsys):
     fake = install_env(answers=["n", "y", "y"], failing={"brew upgrade nono"})
     leash.run_update()
     assert fake.calls == ["brew upgrade nono", "nono update"]
-    assert "'brew upgrade nono' failed" in capsys.readouterr().err
+    assert capsys.readouterr().out.splitlines() == [
+        "🦮 Update leash in "
+        f"{Path(leash.__file__).resolve().parent} with `git pull --ff-only`? (Y/n) n 🛑",
+        "🦮 Upgrade nono with `brew upgrade nono`? (Y/n) Y ❌",
+        "🦮 Update the installed nono packs with `nono update`? (Y/n) Y ✅",
+    ]
+
+
+# --- step / run_step / --verbose ---------------------------------------------
+
+@pytest.mark.parametrize("typed, yes, shown", [
+    pytest.param("", True, "Y", id="enter-means-yes"),
+    pytest.param("y", True, "Y", id="y"),
+    pytest.param("YES", True, "Y", id="yes"),
+    pytest.param("n", False, "n 🛑\n", id="n"),
+    pytest.param("whatever", False, "n 🛑\n", id="other"),
+    pytest.param(None, False, "n 🛑\n", id="eof-means-no"),
+])
+def test_confirm(install_env, capsys, typed, yes, shown):
+    install_env(answers=[] if typed is None else [typed])
+    assert leash.confirm("Go?") is yes
+    assert capsys.readouterr().out == f"🦮 Go? (Y/n) {shown}"
+
+
+@pytest.fixture
+def real_run_cmd(monkeypatch):
+    monkeypatch.setattr(leash, "run_cmd",
+                        lambda cmd, **kw: leash.subprocess.run(leash.shlex.split(cmd), **kw))
+
+
+@pytest.mark.parametrize("cmd, ok, mark", [
+    pytest.param("echo hi", True, "✅", id="success"),
+    pytest.param("sh -c 'echo hi; exit 1'", False, "❌", id="failure"),
+    pytest.param("no-such-command-xyz", False, "❌", id="missing"),
+])
+def test_run_step_silent_shows_output_only_on_failure(real_run_cmd, capfd, cmd, ok, mark):
+    # run_step carries on a line confirm() already printed, so only the
+    # dots and the mark are new.
+    assert leash.run_step("🦮 Go? (Y/n) Y", cmd, verbose=False) is ok
+    out, err = capfd.readouterr()
+    assert out.startswith(" ") and out.endswith(f"{mark}\n")
+    assert "\n" not in out[:-1] and "hi" not in out
+    assert bool(err) is not ok
+
+
+def test_run_step_verbose_streams_output_above_progress(real_run_cmd, capfd):
+    assert leash.run_step("🦮 Go? (Y/n) Y", "echo hi", verbose=True)
+    # Without a terminal the progress line can't be redrawn below the output,
+    # so it's repeated when the step ends.
+    assert capfd.readouterr().out == " \nhi\n🦮 Go? (Y/n) Y ✅\n"
+
+
+def test_run_step_callable_failure(capfd):
+    def fail():
+        raise PermissionError("nope")
+    assert not leash.run_step("🦮 Go? (Y/n) Y", fail, verbose=False)
+    out, err = capfd.readouterr()
+    assert out == " ❌\n" and "nope" in err
+
+
+def test_step_declined_skips_action(install_env, capsys):
+    install_env(answers=["n"])
+    ran = []
+    assert not leash.step("Go?", lambda: ran.append(1))
+    assert ran == [] and capsys.readouterr().out == "🦮 Go? (Y/n) n 🛑\n"
+
+
+@pytest.mark.parametrize("argv, verbose", [
+    pytest.param(["update"], False, id="default"),
+    pytest.param(["--verbose", "update"], True, id="verbose"),
+])
+def test_verbose_flag_reaches_subcommand(run_main, monkeypatch, argv, verbose):
+    seen = []
+    monkeypatch.setattr(leash, "run_update", seen.append)
+    code, out, _ = run_main(*argv)
+    assert code == 0 and seen == [verbose]
+    assert ("`leash --verbose update`" in out) is not verbose
+
+
+def test_silent_notice_skipped_after_install_sh(run_main, monkeypatch):
+    monkeypatch.setattr(leash, "run_install", lambda verbose: None)
+    monkeypatch.setenv("LEASH_NOTICE_SHOWN", "1")
+    assert "silent mode" not in run_main("install")[1]
+
+
+@pytest.mark.parametrize("argv, text", [
+    pytest.param(["--verbose", "claude"], "--verbose only applies", id="with-tool"),
+    pytest.param(["update", "--verbose"], "'update' takes no arguments", id="after-name"),
+])
+def test_verbose_flag_errors(run_main, argv, text):
+    code, _, err = run_main(*argv)
+    assert code == 1 and text in err
 
 
 # --- uninstall ---------------------------------------------------------------
@@ -444,7 +536,9 @@ def test_uninstall_brew_failure_continues(install_env, fake_checkout, capsys):
     install_env(answers=["y", "y"], failing={"brew uninstall nono"})
     leash.run_uninstall()
     assert not root.exists()
-    assert "'brew uninstall nono' failed" in capsys.readouterr().err
+    out = capsys.readouterr().out
+    assert "🦮 Uninstall nono with `brew uninstall nono`? (Y/n) Y ❌\n" in out
+    assert out.endswith("(Y/n) Y ✅\n")
 
 
 # --- install: PATH setup -----------------------------------------------------
@@ -553,7 +647,7 @@ def test_posix_path_line_is_idempotent(shell, line, home):
 @pytest.fixture
 def install_home(home, monkeypatch):
     """`home`, with nono already set up and ~/.local/bin off PATH."""
-    monkeypatch.setattr(leash, "ensure_nono", lambda: None)
+    monkeypatch.setattr(leash, "ensure_nono", lambda verbose=False: None)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("SHELL", "/bin/zsh")
     return home

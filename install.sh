@@ -5,6 +5,7 @@
 # anything asks first.
 #
 #   curl -fsSL https://kamasheto.dev/install-leash | bash
+#   curl -fsSL https://kamasheto.dev/install-leash | bash -s -- --verbose
 #
 # The script arrives on stdin, so prompts read from /dev/tty instead. Piping
 # (rather than `bash -c "$(curl ...)"`) keeps the script out of bash's
@@ -33,18 +34,28 @@ die() {
     exit 1
 }
 
-# Asks a y/n question on the terminal; anything but y/yes (or no terminal) is no.
+# Asks a y/n question on the terminal, like leash's own confirm(): Enter or
+# y/yes is yes; anything else (or no terminal) is no.
 confirm() {
     local answer
-    { printf 'leash: %s (y/n) ' "$1" >/dev/tty; } 2>/dev/null || return 1
+    { printf '🦮 %s (Y/n) ' "$1" >/dev/tty; } 2>/dev/null || return 1
     read -r answer </dev/tty || return 1
     case "$answer" in
-        [yY] | [yY][eE][sS]) return 0 ;;
+        "" | [yY] | [yY][eE][sS]) return 0 ;;
         *) return 1 ;;
     esac
 }
 
 main() {
+    # Without --verbose, git runs quietly and `leash install` hides the output
+    # of the commands it runs.
+    local verbose="" quiet="-q"
+    case "${1:-}" in
+        --verbose) verbose="--verbose" quiet="" ;;
+        "") ;;
+        *) die "unknown option '$1' (only --verbose is supported)." ;;
+    esac
+
     printf '%sInstalling leash%s\n' "$BOLD" "$RESET"
 
     command -v git >/dev/null || die "git is required but not found in PATH."
@@ -54,11 +65,14 @@ main() {
         die "leash needs Python 3.11+, but python3 is $(python3 -V 2>&1 | awk '{print $2}')."
     ok "python $(python3 -V 2>&1 | awk '{print $2}')"
     echo
+    if [ -z "$verbose" ]; then
+        printf '%s\n\n' "⚠️  Running in silent mode. To see progress details, re-run this command in verbose mode: \`curl -fsSL https://kamasheto.dev/install-leash | bash -s -- --verbose\`"
+    fi
 
     if [ -d "$LEASH_DIR/.git" ]; then
         confirm "Update the leash checkout in $LEASH_DIR_SHOWN (git pull)?" ||
             die "installation stopped."
-        git -C "$LEASH_DIR" pull --ff-only ||
+        git -C "$LEASH_DIR" pull $quiet --ff-only ||
             die "couldn't update $LEASH_DIR_SHOWN."
         ok "Updated leash in $LEASH_DIR_SHOWN"
     elif [ -e "$LEASH_DIR" ]; then
@@ -66,18 +80,19 @@ main() {
     else
         confirm "Clone leash into $LEASH_DIR_SHOWN?" || die "installation stopped."
         mkdir -p "$(dirname "$LEASH_DIR")"
-        git clone "$REPO_URL" "$LEASH_DIR" ||
+        git clone $quiet "$REPO_URL" "$LEASH_DIR" ||
             die "couldn't clone $REPO_URL."
         ok "Cloned leash into $LEASH_DIR_SHOWN"
     fi
 
     # `leash install` asks before each remaining change (nono, the
     # ~/.local/bin/leash symlink, your shell's PATH). Its answers come from the
-    # terminal too, since stdin is this script.
+    # terminal too, since stdin is this script. LEASH_NOTICE_SHOWN stops it
+    # repeating the silent-mode notice above.
     if (exec </dev/tty) 2>/dev/null; then
-        "$LEASH_DIR/cli" install </dev/tty
+        LEASH_NOTICE_SHOWN=1 "$LEASH_DIR/cli" $verbose install </dev/tty
     else
-        "$LEASH_DIR/cli" install
+        LEASH_NOTICE_SHOWN=1 "$LEASH_DIR/cli" $verbose install
     fi
 }
 

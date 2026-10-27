@@ -26,9 +26,12 @@ The [installer](install.sh) asks before each change it makes:
 3. Symlinks `~/.local/bin/leash`.
 4. Adds `~/.local/bin` to your `PATH` if it isn't already there. It edits the startup file of your login shell, plus any other shell you've already set up: `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or `~/.config/fish/conf.d/leash.fish`. Files that already mention `~/.local/bin` are left alone.
 
-The following sub-commands are also baked in (a prompt is shown at every step):
-* `leash update` -- to update leash, nono (via brew), and nono profiles. 
-* `leash uninstall` -- to uninstall leash, and nono (via brew) (The `PATH` line in your shell's startup file stays; remove it yourself if you no longer need it.)
+To update or remove it later (each also asks before every step):
+
+```sh
+leash update      # leash, nono (via brew) and nono's profiles
+leash uninstall   # nono (via brew) and leash; the PATH line stays
+```
 
 ### Manual install
 
@@ -57,6 +60,7 @@ leash's own flags go before the tool name. Everything after it is passed through
 | Option | What it does |
 | --- | --- |
 | `--with-git` | Lets the agent run `git` and read `.git/` for this session. Off by default, see [below](#keeping-things-out-leash) for why. |
+| `--verbose` | For `install`, `update` and `uninstall`: show the output of the commands they run. |
 | `-h`, `--help` | Show usage |
 
 ## Keeping things out: `.leash`

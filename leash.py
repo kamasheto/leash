@@ -19,6 +19,8 @@ puts ~/.local/bin on PATH in your shell's startup file; install.sh clones the
 repo to ~/.local/share/leash and runs this for you)
 """
 
+PROGRESS_DOTS_DELAY = 0.1
+
 import hashlib
 import json
 import os
@@ -27,6 +29,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 # Runs before any function is defined, so a too-old python3 (macOS still ships
@@ -113,6 +116,7 @@ def die(message: str) -> None:
 
 def usage() -> None:
     print("""usage: leash [--with-git] <tool> [args...]
+       leash [--verbose] install|update|uninstall
 
 Runs <tool> (e.g. claude, codex) sandboxed with nono, scoped to this
 project. Respects `.leash` (.gitignore syntax) to deny access to
@@ -121,6 +125,8 @@ specific files/dirs. Requires a nono profile named <tool> to extend
 
 options (must come before <tool>):
   --with-git  allow git in this session/profile
+  --verbose   install/update/uninstall: show the output of the commands
+              they run (hidden by default unless a command fails)
 
 examples:
   leash claude
@@ -171,45 +177,175 @@ def unique_sorted(items: list[str]) -> list[str]:
 NONO_PACKS = {"claude": "nolabs-ai/claude", "codex": "nolabs-ai/codex"}
 
 
+def step_prompt(question: str) -> str:
+    return f"🦮 {question} (Y/n) "
+
+
+def terminal_rows(text: str) -> int:
+    """How many terminal rows `text` wraps onto (emoji outside the BMP, like
+    🦮, are two columns wide)."""
+    from shutil import get_terminal_size
+    width = len(text) + sum(ord(c) > 0xFFFF for c in text)
+    return max(1, -(-width // get_terminal_size().columns))
+
+
 def confirm(question: str) -> bool:
-    """Asks a y/n question on the terminal; anything but y/yes (or EOF) is no."""
+    """Asks a y/n question on a 🦮 line; Enter means yes, and EOF (no
+    terminal) means no. The answer is redrawn as Y or n on the question's own
+    line; a no ends that line with 🛑, a yes leaves it open for run_step."""
+    prompt = step_prompt(question)
     try:
-        answer = input(f"leash: {question} (y/n) ")
+        typed = input(prompt)
+        echoed = sys.stdin.isatty()  # the terminal echoed the answer and Enter
     except EOFError:
+        typed, echoed = "n", False
+    yes = typed.strip().lower() in ("", "y", "yes")
+    shown = "Y" if yes else "n"
+    if echoed and sys.stdout.isatty():
+        # Back up over the echoed answer and Enter to redraw the line.
+        sys.stdout.write(f"\033[{terminal_rows(prompt + typed)}A\r\033[J{prompt}{shown}")
+    else:
+        sys.stdout.write(shown)
+    print("" if yes else " 🛑", end="" if yes else "\n", flush=True)
+    return yes
+
+
+class ProgressLine:
+    """The 🦮 line of a step whose action is running: it grows a dot every
+    half second, and output printed via print_above lands above it, so it
+    stays the bottom line of the terminal until end() adds ✅ or ❌. Without
+    a terminal it can't be redrawn, so output just follows it."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.at_bottom = True  # False once output has followed it (no terminal)
+        self.tty = sys.stdout.isatty()
+        self.lock = threading.Lock()
+
+    def add(self, s: str) -> None:
+        with self.lock:
+            self.text += s
+            if self.at_bottom:
+                sys.stdout.write(s)
+                sys.stdout.flush()
+
+    def print_above(self, output: str) -> None:
+        output = output if output.endswith("\n") else output + "\n"
+        with self.lock:
+            if self.tty:
+                up = terminal_rows(self.text) - 1
+                cursor_up = f"\033[{up}A" if up else ""
+                sys.stdout.write(f"{cursor_up}\r\033[J{output}{self.text}")
+            elif self.at_bottom:
+                sys.stdout.write(f"\n{output}")
+                self.at_bottom = False
+            else:
+                sys.stdout.write(output)
+            sys.stdout.flush()
+
+    def end(self, mark: str) -> None:
+        with self.lock:
+            if not self.at_bottom:
+                sys.stdout.write(self.text)
+            print(("" if self.text.endswith(" ") else " ") + mark, flush=True)
+
+
+def run_command(cmd: str, emit) -> bool:
+    """Runs `cmd` with stdout and stderr passed line by line to `emit`."""
+    read_fd, write_fd = os.pipe()
+
+    def pump() -> None:
+        with os.fdopen(read_fd, errors="replace") as out:
+            for output_line in out:
+                emit(output_line)
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+    try:
+        # No stdin: a command waiting on a prompt nobody can see under the
+        # progress line fails instead of hanging.
+        return run_cmd(cmd, stdin=subprocess.DEVNULL,
+                       stdout=write_fd, stderr=write_fd).returncode == 0
+    except FileNotFoundError:
+        emit(f"leash: '{shlex.split(cmd)[0]}' is not installed or not in PATH\n")
         return False
-    return answer.strip().lower() in ("y", "yes")
+    finally:
+        os.close(write_fd)
+        # Bounded: a background process the command left behind can hold the
+        # pipe open.
+        reader.join(timeout=2)
+
+
+def run_step(text: str, action, verbose: bool) -> bool:
+    """Runs a step's action on its progress line `text` (see ProgressLine),
+    ticking dots until it ends in ✅ or ❌. `action` is a run_cmd command
+    string, or a callable that raises OSError on failure. Its output is
+    hidden (and shown only if it fails) unless verbose, where it streams
+    above the progress line."""
+    line = ProgressLine(text)
+    line.add(" ")
+    output: list[str] = []
+    emit = line.print_above if verbose else output.append
+    done = threading.Event()
+
+    def tick() -> None:
+        while not done.wait(PROGRESS_DOTS_DELAY):
+            line.add(".")
+    ticker = threading.Thread(target=tick, daemon=True)
+    ticker.start()
+    try:
+        if callable(action):
+            try:
+                action()
+                ok = True
+            except OSError as e:
+                emit(f"leash: {e}\n")
+                ok = False
+        else:
+            ok = run_command(action, emit)
+    finally:
+        done.set()
+        ticker.join()
+    line.end("✅" if ok else "❌")
+    if not ok:
+        sys.stderr.write("".join(output))
+    return ok
+
+
+def step(question: str, action, verbose: bool = False) -> bool:
+    """One install/update/uninstall step on a single line:
+        🦮 <question> (Y/n) Y ........ ✅
+        🦮 <question> (Y/n) n 🛑
+    Returns True only if the step was confirmed and its action succeeded."""
+    if not confirm(question):
+        return False
+    return run_step(step_prompt(question) + "Y", action, verbose)
 
 
 def has_nono_profile(name: str) -> bool:
     return run_cmd(f"nono profile show {quote(name)}", capture_output=True).returncode == 0
 
 
-def ensure_nono() -> None:
+def ensure_nono(verbose: bool = False) -> None:
     """Offers to install nono and the claude/codex base profiles, dying if
     nono is declined or neither profile ends up installed."""
     from shutil import which
     if which("nono") is None:
-        if not confirm("nono is not installed. Install it with 'brew install nono'?"):
+        if not step("nono is not installed. Install it with `brew install nono`?",
+                    "brew install nono", verbose):
             die("nono is required; installation stopped.")
-        require_cmd("brew")
-        if run_cmd("brew install nono").returncode != 0:
-            die("'brew install nono' failed; installation stopped.")
 
     installed = []
     for tool, pack in NONO_PACKS.items():
-        if has_nono_profile(tool):
+        if has_nono_profile(tool) or step(
+                f"Install the nono {tool} profile with `nono pull {pack}`?",
+                f"nono pull {quote(pack)}", verbose):
             installed.append(tool)
-        elif confirm(f"Install the nono {tool} profile with 'nono pull {pack}'?"):
-            if run_cmd(f"nono pull {quote(pack)}").returncode == 0:
-                installed.append(tool)
-            else:
-                print(f"leash: warning: 'nono pull {pack}' failed.", file=sys.stderr)
     if not installed:
         die(f"no nono profile for {' or '.join(NONO_PACKS)} is installed; installation stopped.")
 
 
-def run_install() -> None:
-    ensure_nono()
+def run_install(verbose: bool = False) -> None:
+    ensure_nono(verbose)
 
     # Link to the `cli` symlink next to leash.py rather than leash.py itself.
     self_path = Path(__file__).resolve().parent / "cli"
@@ -219,14 +355,14 @@ def run_install() -> None:
     if target.is_symlink() and target.readlink() == self_path:
         print(f"leash: {target} already points at {self_path}")
     else:
+        def link() -> None:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            target.unlink(missing_ok=True)
+            target.symlink_to(self_path)
         action = "Replace" if target.exists() or target.is_symlink() else "Create"
-        if not confirm(f"{action} {target} as a symlink to {self_path}?"):
-            print(f"leash: skipped the symlink; run {self_path} directly instead.")
+        if not step(f"{action} {target} as a symlink to {self_path}?", link, verbose):
+            print(f"leash: no symlink; run {self_path} directly instead.")
             return
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
-        target.symlink_to(self_path)
-        print(f"leash: symlinked {self_path} -> {target}")
 
     path_env = f":{os.environ.get('PATH', '')}:"
     if f":{bin_dir}:" not in path_env:
@@ -273,17 +409,17 @@ def add_bin_dir_to_path() -> None:
         print("leash: ~/.local/bin is already in your shell's startup files; "
               "open a new terminal to use 'leash'.")
         return
+    def append_path_lines() -> None:
+        for rc, line in pending:
+            text = rc.read_text() if rc.exists() else ""
+            rc.parent.mkdir(parents=True, exist_ok=True)
+            separator = "\n" if text and not text.endswith("\n") else ""
+            with rc.open("a") as f:
+                f.write(f"{separator}\n{PATH_MARKER}\n{line}\n")
     names = ", ".join(str(rc) for rc, _ in pending)
-    if not confirm(f"~/.local/bin is not on your PATH. Add it in {names}?"):
+    if not step(f"~/.local/bin is not on your PATH. Add it in {names}?", append_path_lines):
         print(f"leash: left your PATH alone. {manual_hint}")
         return
-    for rc, line in pending:
-        text = rc.read_text() if rc.exists() else ""
-        rc.parent.mkdir(parents=True, exist_ok=True)
-        separator = "\n" if text and not text.endswith("\n") else ""
-        with rc.open("a") as f:
-            f.write(f"{separator}\n{PATH_MARKER}\n{line}\n")
-        print(f"leash: added ~/.local/bin to PATH in {rc}")
     print("leash: open a new terminal to use 'leash'.")
 
 
@@ -291,49 +427,38 @@ def add_bin_dir_to_path() -> None:
 # update subcommand
 # ---------------------------------------------------------------------------
 
-def run_update() -> None:
+def run_update(verbose: bool = False) -> None:
     """Offers, one y/n at a time, to pull leash's own checkout, upgrade nono
     with brew, and update the installed nono packs. A declined or failed step
     doesn't stop the ones after it."""
     leash_root = Path(__file__).resolve().parent
-    steps = [
-        (f"Update leash in {leash_root} with 'git pull --ff-only'?",
-         f"git -C {quote(str(leash_root))} pull --ff-only", "git"),
-        ("Upgrade nono with 'brew upgrade nono'?", "brew upgrade nono", "brew"),
-        ("Update the installed nono packs with 'nono update'?", "nono update", "nono"),
-    ]
-    for question, cmd, needs in steps:
-        if not confirm(question):
-            continue
-        require_cmd(needs)
-        if run_cmd(cmd).returncode != 0:
-            print(f"leash: warning: '{cmd}' failed.", file=sys.stderr)
+    step(f"Update leash in {leash_root} with `git pull --ff-only`?",
+         f"git -C {quote(str(leash_root))} pull --ff-only", verbose)
+    step("Upgrade nono with `brew upgrade nono`?", "brew upgrade nono", verbose)
+    step("Update the installed nono packs with `nono update`?", "nono update", verbose)
 
 
 # ---------------------------------------------------------------------------
 # uninstall subcommand
 # ---------------------------------------------------------------------------
 
-def run_uninstall() -> None:
+def run_uninstall(verbose: bool = False) -> None:
     """Offers, one y/n at a time, to `brew uninstall nono` and to delete
     leash's own checkout along with the ~/.local/bin/leash symlink pointing
     into it. The PATH line added by install is left alone."""
     from shutil import rmtree
-    if confirm("Uninstall nono with 'brew uninstall nono'?"):
-        require_cmd("brew")
-        if run_cmd("brew uninstall nono").returncode != 0:
-            print("leash: warning: 'brew uninstall nono' failed.", file=sys.stderr)
+    step("Uninstall nono with `brew uninstall nono`?", "brew uninstall nono", verbose)
 
     leash_root = Path(__file__).resolve().parent
     link = Path.home() / ".local" / "bin" / "leash"
     owns_link = link.is_symlink() and link.readlink() == leash_root / "cli"
     targets = f"{leash_root}" + (f" and the {link} symlink" if owns_link else "")
-    if not confirm(f"Delete {targets}?"):
-        return
-    if owns_link:
-        link.unlink()
-    rmtree(leash_root)
-    print(f"leash: removed {targets}.")
+
+    def remove() -> None:
+        if owns_link:
+            link.unlink()
+        rmtree(leash_root)
+    step(f"Delete {targets}?", remove, verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -649,11 +774,13 @@ def main() -> None:
 
     # leash's own flags come before the tool name; everything after it is
     # passed through to the tool untouched.
-    with_git = False
+    with_git = verbose = False
     while args and args[0].startswith("-"):
         flag = args.pop(0)
         if flag == "--with-git":
             with_git = True
+        elif flag == "--verbose":
+            verbose = True
         elif flag in ("-h", "--help"):
             usage()
             return
@@ -665,15 +792,18 @@ def main() -> None:
 
     tool, tool_args = args[0], args[1:]
 
-    if tool == "install":
-        run_install()
+    subcommands = {"install": run_install, "update": run_update, "uninstall": run_uninstall}
+    if tool in subcommands:
+        if tool_args:
+            die(f"'{tool}' takes no arguments (leash options go before it; see 'leash --help')")
+        # install.sh shows its own copy (with its own re-run command) first.
+        if not verbose and not os.environ.get("LEASH_NOTICE_SHOWN"):
+            print(f"⚠️  Running in silent mode. To see progress details, re-run this "
+                  f"command in verbose mode: `leash --verbose {tool}`\n")
+        subcommands[tool](verbose)
         return
-    if tool == "update":
-        run_update()
-        return
-    if tool == "uninstall":
-        run_uninstall()
-        return
+    if verbose:
+        die("--verbose only applies to install, update and uninstall")
 
     require_cmd("nono")
     require_cmd("git")
