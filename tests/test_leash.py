@@ -395,6 +395,58 @@ def test_update_failure_continues(install_env, capsys):
     assert "'brew upgrade nono' failed" in capsys.readouterr().err
 
 
+# --- uninstall ---------------------------------------------------------------
+
+@pytest.fixture
+def fake_checkout(tmp_path, monkeypatch):
+    """A scratch leash checkout that leash.__file__ points into, plus a HOME
+    whose ~/.local/bin/leash links to its `cli`."""
+    root = tmp_path / "share" / "leash"
+    root.mkdir(parents=True)
+    (root / "leash.py").write_text("")
+    (root / "cli").symlink_to("leash.py")
+    monkeypatch.setattr(leash, "__file__", str(root / "leash.py"))
+    home = tmp_path / "home"
+    link = home / ".local" / "bin" / "leash"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(root.resolve() / "cli")
+    monkeypatch.setenv("HOME", str(home))
+    return root, link
+
+
+def test_uninstall_declined_keeps_everything(install_env, fake_checkout):
+    root, link = fake_checkout
+    fake = install_env()  # input() EOFs -> no
+    leash.run_uninstall()
+    assert fake.calls == []
+    assert root.exists() and link.is_symlink()
+
+
+def test_uninstall_all_steps(install_env, fake_checkout):
+    root, link = fake_checkout
+    fake = install_env(answers=["y", "y"])
+    leash.run_uninstall()
+    assert fake.calls == ["brew uninstall nono"]
+    assert not root.exists() and not link.is_symlink()
+
+
+def test_uninstall_leaves_foreign_symlink(install_env, fake_checkout, tmp_path):
+    root, link = fake_checkout
+    link.unlink()
+    link.symlink_to(tmp_path / "elsewhere")
+    install_env(answers=["n", "y"])
+    leash.run_uninstall()
+    assert not root.exists() and link.is_symlink()
+
+
+def test_uninstall_brew_failure_continues(install_env, fake_checkout, capsys):
+    root, _ = fake_checkout
+    install_env(answers=["y", "y"], failing={"brew uninstall nono"})
+    leash.run_uninstall()
+    assert not root.exists()
+    assert "'brew uninstall nono' failed" in capsys.readouterr().err
+
+
 # --- install: PATH setup -----------------------------------------------------
 
 @pytest.fixture

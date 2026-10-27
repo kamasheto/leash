@@ -127,7 +127,8 @@ examples:
   leash --with-git claude --resume
   leash codex
   leash install
-  leash update""")
+  leash update
+  leash uninstall""")
 
 
 def require_cmd(name: str) -> None:
@@ -307,6 +308,32 @@ def run_update() -> None:
         require_cmd(needs)
         if run_cmd(cmd).returncode != 0:
             print(f"leash: warning: '{cmd}' failed.", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# uninstall subcommand
+# ---------------------------------------------------------------------------
+
+def run_uninstall() -> None:
+    """Offers, one y/n at a time, to `brew uninstall nono` and to delete
+    leash's own checkout along with the ~/.local/bin/leash symlink pointing
+    into it. The PATH line added by install is left alone."""
+    from shutil import rmtree
+    if confirm("Uninstall nono with 'brew uninstall nono'?"):
+        require_cmd("brew")
+        if run_cmd("brew uninstall nono").returncode != 0:
+            print("leash: warning: 'brew uninstall nono' failed.", file=sys.stderr)
+
+    leash_root = Path(__file__).resolve().parent
+    link = Path.home() / ".local" / "bin" / "leash"
+    owns_link = link.is_symlink() and link.readlink() == leash_root / "cli"
+    targets = f"{leash_root}" + (f" and the {link} symlink" if owns_link else "")
+    if not confirm(f"Delete {targets}?"):
+        return
+    if owns_link:
+        link.unlink()
+    rmtree(leash_root)
+    print(f"leash: removed {targets}.")
 
 
 # ---------------------------------------------------------------------------
@@ -643,6 +670,9 @@ def main() -> None:
         return
     if tool == "update":
         run_update()
+        return
+    if tool == "uninstall":
+        run_uninstall()
         return
 
     require_cmd("nono")
