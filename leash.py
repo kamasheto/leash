@@ -24,6 +24,7 @@ repo to ~/.local/share/leash and runs this for you)
 """
 
 PROGRESS_DOTS_DELAY = 0.1
+LOG_RETENTION = 14
 
 import hashlib
 import json
@@ -34,6 +35,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+from datetime import datetime
 from pathlib import Path
 
 # Runs before any function is defined, so a too-old python3 (macOS still ships
@@ -110,11 +113,25 @@ class Paths:
         self.hash_path = project_root / STATE_DIR / f"{tool}.ignore.sha256"
         self.extra_path = project_root / STATE_DIR / f"{tool}.extra.json"
         self.schema_path = project_root / STATE_DIR / "nono-profile.schema.json"
+        self.logs_dir = Path(__file__).resolve().parent / ".logs"
+        now = datetime.now()
+        self.log_path = self.logs_dir / (
+            f"{now:%Y-%m-%d-%H-%M-%S}-{now.microsecond // 1000:03d}"
+            f"-{slugify(project_root.name)}-{tool}.nono.log")
         self.profile_name = f"leash-{tool}-{slugify(project_root.name)}"
 
 
 def slugify(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", name).strip("-")
+
+
+def prune_logs(logs_dir: Path) -> None:
+    """Create logs_dir and delete session logs older than LOG_RETENTION days."""
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    cutoff = time.time() - LOG_RETENTION * 24 * 60 * 60
+    for log in logs_dir.glob("*.nono.log"):
+        if log.stat().st_mtime < cutoff:
+            log.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -844,8 +861,12 @@ def main() -> None:
         build_profile(p)
 
     tool_cmd = " ".join(quote(arg) for arg in (tool, *tool_args))
+    prune_logs(p.logs_dir)
+    # -v prints the capability list up front; --log-file keeps its log lines
+    # (proxy chatter, mostly) out of the agent's terminal.
     result = run_cmd(
-        f"nono run -v --allow-cwd --profile {quote(str(p.profile_path))} "
+        f"nono run -v --log-file {quote(str(p.log_path))} --allow-cwd "
+        f"--profile {quote(str(p.profile_path))} "
         f"--workdir {quote(str(project_root))} -- {tool_cmd}"
     )
 

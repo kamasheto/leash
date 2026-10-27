@@ -1,5 +1,9 @@
-.leash-agents/
 .DS_Store
 __pycache__/
 .venv/
 .pytest_cache/
+
+.claude/
+.leash-agents/
+.logs/*
+!.logs/README.md
