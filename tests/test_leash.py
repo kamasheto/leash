@@ -364,6 +364,37 @@ def test_install_stops_before_symlink_when_nono_declined(install_env, tmp_path, 
     assert not (tmp_path / ".local" / "bin" / "leash").exists()
 
 
+# --- update ------------------------------------------------------------------
+
+UPDATE_CMDS = ("git -C", "brew upgrade nono", "nono update")
+
+
+@pytest.mark.parametrize("answers, expected", [
+    pytest.param(["y", "y", "y"], UPDATE_CMDS, id="all"),
+    pytest.param([], (), id="eof-means-no"),
+    pytest.param(["n", "y", "n"], ("brew upgrade nono",), id="only-brew"),
+])
+def test_update_runs_only_confirmed_steps(install_env, answers, expected):
+    fake = install_env(answers=answers)
+    leash.run_update()
+    assert len(fake.calls) == len(expected)
+    assert all(c.startswith(prefix) for c, prefix in zip(fake.calls, expected))
+
+
+def test_update_pulls_leash_checkout(install_env):
+    fake = install_env(answers=["y"])
+    leash.run_update()
+    root = Path(leash.__file__).resolve().parent
+    assert fake.calls == [f"git -C {leash.quote(str(root))} pull --ff-only"]
+
+
+def test_update_failure_continues(install_env, capsys):
+    fake = install_env(answers=["n", "y", "y"], failing={"brew upgrade nono"})
+    leash.run_update()
+    assert fake.calls == ["brew upgrade nono", "nono update"]
+    assert "'brew upgrade nono' failed" in capsys.readouterr().err
+
+
 # --- install: PATH setup -----------------------------------------------------
 
 @pytest.fixture

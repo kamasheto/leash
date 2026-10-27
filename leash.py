@@ -126,7 +126,8 @@ examples:
   leash claude
   leash --with-git claude --resume
   leash codex
-  leash install""")
+  leash install
+  leash update""")
 
 
 def require_cmd(name: str) -> None:
@@ -283,6 +284,29 @@ def add_bin_dir_to_path() -> None:
             f.write(f"{separator}\n{PATH_MARKER}\n{line}\n")
         print(f"leash: added ~/.local/bin to PATH in {rc}")
     print("leash: open a new terminal to use 'leash'.")
+
+
+# ---------------------------------------------------------------------------
+# update subcommand
+# ---------------------------------------------------------------------------
+
+def run_update() -> None:
+    """Offers, one y/n at a time, to pull leash's own checkout, upgrade nono
+    with brew, and update the installed nono packs. A declined or failed step
+    doesn't stop the ones after it."""
+    leash_root = Path(__file__).resolve().parent
+    steps = [
+        (f"Update leash in {leash_root} with 'git pull --ff-only'?",
+         f"git -C {quote(str(leash_root))} pull --ff-only", "git"),
+        ("Upgrade nono with 'brew upgrade nono'?", "brew upgrade nono", "brew"),
+        ("Update the installed nono packs with 'nono update'?", "nono update", "nono"),
+    ]
+    for question, cmd, needs in steps:
+        if not confirm(question):
+            continue
+        require_cmd(needs)
+        if run_cmd(cmd).returncode != 0:
+            print(f"leash: warning: '{cmd}' failed.", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +640,9 @@ def main() -> None:
 
     if tool == "install":
         run_install()
+        return
+    if tool == "update":
+        run_update()
         return
 
     require_cmd("nono")

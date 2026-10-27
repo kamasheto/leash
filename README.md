@@ -26,7 +26,7 @@ The [installer](install.sh) asks before each change it makes:
 3. Symlinks `~/.local/bin/leash`.
 4. Adds `~/.local/bin` to your `PATH` if it isn't already there. It edits the startup file of your login shell, plus any other shell you've already set up: `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or `~/.config/fish/conf.d/leash.fish`. Files that already mention `~/.local/bin` are left alone.
 
-To update, run the same command again.
+To update, run `leash update`. It asks before each step: pulling the leash checkout, `brew upgrade nono`, and `nono update` (which updates nono's installed profiles).
 
 ### Manual install
 
