@@ -21,18 +21,19 @@ class Project:
         path.write_text(text)
         return path
 
-    def paths(self, tool: str = "claude", with_git: bool = False):
-        return leash.Paths(tool=tool, project_root=self.root, with_git=with_git)
+    def paths(self, tool: str = "claude", with_git: bool = False, with_net: bool = False):
+        return leash.Paths(tool=tool, project_root=self.root, with_git=with_git, with_net=with_net)
 
-    def build(self, tool: str = "claude", with_git: bool = False):
+    def build(self, tool: str = "claude", with_git: bool = False, with_net: bool = False):
         """Runs build_profile and returns the Paths it built for."""
-        p = self.paths(tool=tool, with_git=with_git)
+        p = self.paths(tool=tool, with_git=with_git, with_net=with_net)
         leash.build_profile(p)
         return p
 
-    def profile(self, tool: str = "claude", with_git: bool = False) -> dict:
+    def profile(self, tool: str = "claude", with_git: bool = False, with_net: bool = False) -> dict:
         """Runs build_profile and returns the generated profile."""
-        return json.loads(self.build(tool=tool, with_git=with_git).profile_path.read_text())
+        p = self.build(tool=tool, with_git=with_git, with_net=with_net)
+        return json.loads(p.profile_path.read_text())
 
 
 @pytest.fixture

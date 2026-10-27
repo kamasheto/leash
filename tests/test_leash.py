@@ -76,6 +76,11 @@ def test_git_command_policy_unless_with_git(project):
     assert "command_policies" not in project.profile(with_git=True)
 
 
+def test_network_filtered_unless_with_net(project):
+    assert project.profile()["network"] == {"network_profile": leash.NET_PROFILE}
+    assert "network" not in project.profile(with_net=True)
+
+
 def test_profile_metadata(project):
     profile = project.profile(tool="codex")
     assert profile["extends"] == "codex"
@@ -149,6 +154,14 @@ def test_toggling_with_git_triggers_rebuild(project):
     project.build(with_git=True)
     assert not leash.needs_rebuild(project.paths(with_git=True))
     assert leash.needs_rebuild(project.paths(with_git=False))
+
+
+def test_toggling_with_net_triggers_rebuild(project):
+    project.build(with_net=False)
+    assert leash.needs_rebuild(project.paths(with_net=True))
+    project.build(with_net=True)
+    assert not leash.needs_rebuild(project.paths(with_net=True))
+    assert leash.needs_rebuild(project.paths(with_net=False))
 
 
 # --- absorb_session_grants ---------------------------------------------------
@@ -235,6 +248,7 @@ def run_main(project, monkeypatch, capsys):
 @pytest.mark.parametrize("argv, code, stream, text", [
     pytest.param([], 0, "out", "usage: leash", id="no-args"),
     pytest.param(["--help"], 0, "out", "--with-git", id="help"),
+    pytest.param(["--help"], 0, "out", "--with-net", id="help-net"),
     pytest.param(["--bogus", "claude"], 1, "err", "unknown option '--bogus'", id="unknown-flag"),
 ])
 def test_arg_handling(run_main, argv, code, stream, text):
@@ -260,6 +274,16 @@ def test_with_git_flag_before_tool(project, run_main):
     assert "--with-git" in err  # warning printed
     profile = json.loads(project.paths().profile_path.read_text())
     assert "command_policies" not in profile
+    assert "network" in profile
+
+
+def test_with_net_flag_before_tool(project, run_main):
+    code, _, err = run_main("--with-net", "claude")
+    assert code == 0
+    assert "--with-net" in err  # warning printed
+    profile = json.loads(project.paths().profile_path.read_text())
+    assert "network" not in profile
+    assert "command_policies" in profile
 
 
 def test_tool_exit_code_is_propagated(project, run_main, fake_nono):

@@ -53,6 +53,7 @@ leash claude
 leash codex
 leash claude -p "fix the failing test"   # arguments go straight to the tool
 leash --with-git claude                  # let the agent use git this session
+leash --with-net claude                  # let the agent reach any host this session
 ```
 
 leash's own flags go before the tool name. Everything after it is passed through to the tool untouched.
@@ -60,6 +61,7 @@ leash's own flags go before the tool name. Everything after it is passed through
 | Option | What it does |
 | --- | --- |
 | `--with-git` | Lets the agent run `git` and read `.git/` for this session. Off by default, see [below](#keeping-things-out-leash) for why. |
+| `--with-net` | Lifts the network filter for this session, so the agent can reach any host. Off by default, see [below](#network-access). |
 | `--verbose` | For `install`, `update` and `uninstall`: show the output of the commands they run. |
 | `-h`, `--help` | Show usage |
 
@@ -82,6 +84,12 @@ A few things are always off limits, whatever `.leash` says:
 
 So by default the agent has no git access. You do the commits yourself. If you'd rather let it run git for a session, pass `--with-git`, but know that it reopens both of those holes.
 
+## Network access
+
+By default the agent can only reach the LLM APIs it needs to work (api.anthropic.com, api.openai.com and the like), through nono's filtering proxy with its built-in `minimal` network profile. Every other host is blocked, so the agent can't send your code anywhere else or fetch things from the internet. That includes package registries and GitHub, so `npm install`, `pip install` and the like fail inside the sandbox.
+
+Pass `--with-net` to lift the filter for a session. The agent can then reach any host and send it anything it can read.
+
 ## nono's save prompt
 
 When a session ends, nono may ask whether to remember access to paths the agent tried to use. nono normally saves those answers to its own global config, where they'd never apply to this project. leash moves them into the project instead: denials inside the project are appended to `.leash`, and everything else goes into `.leash-agents/<tool>.extra.json`.
@@ -101,7 +109,7 @@ uv run pytest                        # everything
 uv run pytest -m "not integration"   # skip the ones that need nono
 ```
 
-CI doesn't have nono, so run the integration tests locally if your change affects what the sandbox allows. Anything that loosens the always-denied rules should be opt-in, like `--with-git`.
+CI doesn't have nono, so run the integration tests locally if your change affects what the sandbox allows. Anything that loosens the always-denied rules should be opt-in, like `--with-git` and `--with-net`.
 
 See [AGENTS.md](AGENTS.md) for how the code is laid out.
 

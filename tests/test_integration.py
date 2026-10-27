@@ -84,9 +84,9 @@ def repo(project, monkeypatch):
     return project
 
 
-def build(repo, tool: str = BASE, with_git: bool = False) -> Path:
+def build(repo, tool: str = BASE, with_git: bool = False, with_net: bool = False) -> Path:
     # build_profile also runs `nono profile validate`, and dies if it fails.
-    return repo.build(tool=tool, with_git=with_git).profile_path
+    return repo.build(tool=tool, with_git=with_git, with_net=with_net).profile_path
 
 
 def sandboxed(repo, profile: Path, *cmd: str) -> subprocess.CompletedProcess:
@@ -110,18 +110,23 @@ def assert_denied(repo, profile: Path, rel: str) -> None:
 
 # --- validation --------------------------------------------------------------
 
-@pytest.mark.parametrize("with_git", [False, True], ids=["default", "with-git"])
-def test_generated_profile_validates(repo, with_git):
-    result = nono("profile", "validate", str(build(repo, with_git=with_git)))
+MODES = pytest.mark.parametrize("with_git, with_net", [
+    (False, False), (True, False), (False, True), (True, True),
+], ids=["default", "with-git", "with-net", "with-git-and-net"])
+
+
+@MODES
+def test_generated_profile_validates(repo, with_git, with_net):
+    result = nono("profile", "validate", str(build(repo, with_git=with_git, with_net=with_net)))
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("with_git", [False, True], ids=["default", "with-git"])
+@MODES
 @pytest.mark.parametrize("tool", AGENT_BASES)
-def test_generated_profile_validates_against_agent_base(repo, tool, with_git):
+def test_generated_profile_validates_against_agent_base(repo, tool, with_git, with_net):
     if not profile_exists(tool):
         pytest.skip(f"nono profile '{tool}' is not installed")
-    build(repo, tool=tool, with_git=with_git)
+    build(repo, tool=tool, with_git=with_git, with_net=with_net)
 
 
 def test_validate_rejects_a_broken_profile(project):
@@ -201,3 +206,25 @@ class TestWithGitMode:
         result = sandboxed(repo, profile, "git", "show", "HEAD:secret.env")
         assert result.returncode == 0, result.stderr
         assert result.stdout == "top secret\n"
+
+
+# --- network -----------------------------------------------------------------
+
+def host_verdict(profile: Path, host: str) -> str:
+    # Asks nono's policy engine; nothing actually connects anywhere.
+    result = nono("why", "--profile", str(profile), "--host", host, "--port", "443")
+    assert result.returncode == 0, result.stderr
+    return result.stdout.split()[0]  # ALLOWED or DENIED
+
+
+@pytest.mark.parametrize("host", ["api.anthropic.com", "api.openai.com"])
+@pytest.mark.parametrize("with_net", [False, True], ids=["default", "with-net"])
+def test_llm_apis_are_reachable(repo, host, with_net):
+    assert host_verdict(build(repo, with_net=with_net), host) == "ALLOWED"
+
+
+@pytest.mark.parametrize("host", ["example.com", "github.com"])
+@pytest.mark.parametrize("with_net, verdict", [(False, "DENIED"), (True, "ALLOWED")],
+                         ids=["default", "with-net"])
+def test_other_hosts_only_with_net(repo, host, with_net, verdict):
+    assert host_verdict(build(repo, with_net=with_net), host) == verdict
