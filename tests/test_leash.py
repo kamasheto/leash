@@ -8,6 +8,7 @@ For tests against the real nono, see test_integration.py.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -284,6 +285,18 @@ def test_with_net_flag_before_tool(project, run_main):
     profile = json.loads(project.paths().profile_path.read_text())
     assert "network" not in profile
     assert "command_policies" in profile
+
+
+@pytest.mark.parametrize("retention, to_devnull", [(14, False), (0, True)])
+def test_log_retention(project, monkeypatch, tmp_path, retention, to_devnull):
+    monkeypatch.setattr(leash, "LOG_RETENTION", retention)
+    assert (project.paths().log_path == Path(os.devnull)) == to_devnull
+    old_log = tmp_path / "logs" / "old.nono.log"
+    old_log.parent.mkdir()
+    old_log.touch()
+    leash.prune_logs(old_log.parent)
+    # 0 also deletes every log kept so far.
+    assert old_log.exists() != to_devnull
 
 
 def test_tool_exit_code_is_propagated(project, run_main, fake_nono):

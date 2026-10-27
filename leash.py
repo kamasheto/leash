@@ -24,7 +24,7 @@ repo to ~/.local/share/leash and runs this for you)
 """
 
 PROGRESS_DOTS_DELAY = 0.1
-LOG_RETENTION = 14
+LOG_RETENTION = 14  # days to keep session logs; 0 discards nono's log output
 
 import hashlib
 import json
@@ -115,7 +115,7 @@ class Paths:
         self.schema_path = project_root / STATE_DIR / "nono-profile.schema.json"
         self.logs_dir = Path(__file__).resolve().parent / ".logs"
         now = datetime.now()
-        self.log_path = self.logs_dir / (
+        self.log_path = Path(os.devnull) if LOG_RETENTION == 0 else self.logs_dir / (
             f"{now:%Y-%m-%d-%H-%M-%S}-{now.microsecond // 1000:03d}"
             f"-{slugify(project_root.name)}-{tool}.nono.log")
         self.profile_name = f"leash-{tool}-{slugify(project_root.name)}"
@@ -126,7 +126,8 @@ def slugify(name: str) -> str:
 
 
 def prune_logs(logs_dir: Path) -> None:
-    """Create logs_dir and delete session logs older than LOG_RETENTION days."""
+    """Create logs_dir and delete session logs older than LOG_RETENTION days
+    (all of them when it's 0)."""
     logs_dir.mkdir(parents=True, exist_ok=True)
     cutoff = time.time() - LOG_RETENTION * 24 * 60 * 60
     for log in logs_dir.glob("*.nono.log"):
