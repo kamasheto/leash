@@ -23,5 +23,5 @@ This folder contains logs of your agents' sessions while working with `leash`, o
 ### Where these logs go
 The logs stay on your machine, in this folder, so you can review a session after it ends. leash doesn't show them to the agent, doesn't send them anywhere, and doesn't use them for anything else.
 
-At the start of each session, leash deletes logs older than `LOG_RETENTION` days (a constant at the top of `leash.py`, 14 by default). Set it to `0` to turn logging off: leash then writes no log file and discards nono's log output.
+At the start of each session, leash deletes logs older than `LOG_RETENTION` days (set in `config.toml`, 14 by default). Set it to `0` to turn logging off: leash then writes no log file and discards nono's log output.
 

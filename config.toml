@@ -1,0 +1,14 @@
+# leash's settings, read by leash.py. Changing anything here rebuilds every
+# project's profile on its next run (see hash_state in leash.py).
+
+LOG_RETENTION = 14  # days to keep session logs; 0 discards nono's log output
+
+STATE_DIR = ".leash-agents"
+IGNORE_FILE = ".leash"
+
+# nono network profile (from nono's built-in network-policy.json) set unless
+# --with-net is passed. Outbound traffic then goes through nono's filtering
+# proxy: `minimal` allows the LLM APIs (api.anthropic.com, api.openai.com, ...)
+# so the agent still works, and denies every other host. `network.block`
+# would also cut the agent off from its own API.
+NET_PROFILE = "minimal"

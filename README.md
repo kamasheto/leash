@@ -98,9 +98,20 @@ To revoke something you granted, remove it from `extra.json`. It'll be blocked a
 
 Everything else under `.leash-agents/` is generated and safe to delete. leash adds the directory to your `.gitignore` for you.
 
+## Configuration
+
+`config.toml` contains configuration options. Changing anything there rebuilds each project's profile on its next run.
+
+| Option | Default | What it does |
+|---|---|---|
+| `LOG_RETENTION` | `14` | How many days session logs in `.logs/` are kept. Older ones are deleted at the start of each session. `0` turns logging off and deletes every stored log. |
+| `STATE_DIR` | `".leash-agents"` | Name of the per-project folder where leash keeps generated profiles and absorbed grants (`<tool>.extra.json`). It's added to the project's `.gitignore` and the agent can't read it. Renaming it doesn't move an existing folder. |
+| `IGNORE_FILE` | `".leash"` | Name of the per-project file with deny rules (gitignore syntax). The agent can't read it. Renaming it doesn't rename existing files, so their rules stop applying. |
+| `NET_PROFILE` | `"minimal"` | nono network profile used unless you pass `--with-net`. `minimal` lets the agent reach only the LLM APIs (api.anthropic.com, api.openai.com, ...) and blocks every other host. [Preset Network Profiles](https://nono.sh/docs/cli/features/networking#preset-network-profiles) |
+
 ## Contributing
 
-Issues and PRs are welcome. The whole thing is one stdlib-only Python file, `leash.py`, and I'd like to keep it that way: no third-party packages, and no external tools beyond nono and git.
+Issues and PRs are welcome. leash is stdlib-only Python, `leash.py` plus its settings in `config.toml`, and I'd like to keep it that way: no third-party packages, and no external tools beyond nono and git.
 
 Run the tests with [uv](https://docs.astral.sh/uv/):
 

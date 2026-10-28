@@ -21,6 +21,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: uv run --locked python -m py_compile leash.py
+      - run: uv run --locked python -c 'import tomllib; tomllib.load(open("config.toml", "rb"))'
       # leash.py's MIN_PYTHON check only works if an older python3 can still parse
       # the file, so it must stay free of syntax newer than 3.9.
       - run: uv run --no-project --python 3.9 python -m py_compile leash.py
