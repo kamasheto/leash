@@ -124,8 +124,9 @@ def test_generated_profile_validates(repo, with_git, with_net):
 @MODES
 @pytest.mark.parametrize("tool", AGENT_BASES)
 def test_generated_profile_validates_against_agent_base(repo, tool, with_git, with_net):
-    if not profile_exists(tool):
-        pytest.skip(f"nono profile '{tool}' is not installed")
+    base = leash.base_profile(tool)
+    if not profile_exists(base):
+        pytest.skip(f"nono profile '{base}' is not installed")
     build(repo, tool=tool, with_git=with_git, with_net=with_net)
 
 

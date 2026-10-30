@@ -84,8 +84,12 @@ def test_network_filtered_unless_with_net(project):
 
 def test_profile_metadata(project):
     profile = project.profile(tool="codex")
-    assert profile["extends"] == "codex"
+    assert profile["extends"] == "nolabs-ai/codex"
     assert profile["meta"]["name"] == f"leash-codex-{leash.slugify(project.root.name)}"
+
+
+def test_tool_without_a_pack_extends_its_bare_name(project):
+    assert project.profile(tool="mytool")["extends"] == "mytool"
 
 
 def test_leash_patterns_become_denies(project):
@@ -136,6 +140,31 @@ def test_validation_failure_dies(project, fake_nono):
     fake_nono.returncode = 1
     with pytest.raises(SystemExit):
         project.build()
+
+
+@pytest.mark.parametrize("tool, hint", [
+    ("claude", "`nono pull nolabs-ai/claude`"),
+    ("mytool", "'mytool' profile"),
+])
+def test_validation_failure_with_missing_base_names_it(project, fake_nono, capsys, tool, hint):
+    fake_nono.returncode = 1
+    with pytest.raises(SystemExit):
+        project.build(tool=tool)
+    err = capsys.readouterr().err
+    assert hint in err
+    assert "leash bug" not in err
+
+
+def test_validation_failure_with_base_present_is_a_leash_bug(project, fake_nono, monkeypatch, capsys):
+    def run_cmd(cmd, **kwargs):
+        result = fake_nono(cmd, **kwargs)
+        if cmd.startswith("nono profile validate"):
+            result.returncode = 1
+        return result
+    monkeypatch.setattr(leash, "run_cmd", run_cmd)
+    with pytest.raises(SystemExit):
+        project.build()
+    assert "leash bug" in capsys.readouterr().err
 
 
 # --- needs_rebuild -----------------------------------------------------------
@@ -372,7 +401,7 @@ def test_ensure_nono_brew_failure_stops(install_env):
 
 
 def test_ensure_nono_existing_profiles_skip_prompts(install_env):
-    fake = install_env(profiles={"claude", "codex"})  # input() would EOF -> no
+    fake = install_env(profiles={"nolabs-ai/claude", "nolabs-ai/codex"})  # input() would EOF -> no
     leash.ensure_nono()
     assert not any(c.startswith("nono pull") or c.startswith("brew") for c in fake.calls)
 
